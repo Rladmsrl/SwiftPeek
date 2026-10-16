@@ -22,6 +22,7 @@ targets:
       - path: ../ios_native/App/Support/AppSettings.swift
       - path: ../ios_native/App/Support/Library.swift
       - path: ../ios_native/App/Support/FollowTransferController.swift
+      - path: ../ios_native/App/Support/ReplayStores.swift
       - path: ../ios_native/App/Views/FollowTransferView.swift
       - path: ../ios_native/App/Support/Theme.swift
       - path: ../ios_native/App/Views/Components.swift

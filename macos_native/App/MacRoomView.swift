@@ -200,6 +200,7 @@ struct MacRoomView: View {
     @State private var window: NSWindow?
     @Environment(AppSettings.self) private var settings
     @Environment(LibraryStore.self) private var library
+    @Environment(\.openWindow) private var openWindow
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(roomID: String) {
@@ -262,6 +263,12 @@ struct MacRoomView: View {
                             .font(.system(size: 12, weight: .medium)).padding(.horizontal, 8).padding(.vertical, 4)
                     }.buttonStyle(.glass).tint(followed ? MacDesign.accent : nil)
                         .disabled(session.store.detail == nil)
+                    Button {
+                        openWindow(id: "replay", value: ReplayRoute(roomID: session.store.detail?.roomID ?? roomID))
+                    } label: {
+                        Label("录像", systemImage: "play.rectangle.on.rectangle")
+                            .font(.system(size: 12, weight: .medium)).padding(.horizontal, 8).padding(.vertical, 4)
+                    }.buttonStyle(.glass).help("查看主播的直播录像")
                     MacIconButton(symbol: "sidebar.right", help: "显示 / 隐藏弹幕列表", active: showChat) {
                         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) { showChat.toggle() }
                     }
@@ -471,7 +478,7 @@ struct MacRoomView: View {
     }
 }
 
-private struct WindowReader: NSViewRepresentable {
+struct WindowReader: NSViewRepresentable {
     let onResolve: (NSWindow?) -> Void
     func makeNSView(context: Context) -> ReaderView {
         let view = ReaderView()

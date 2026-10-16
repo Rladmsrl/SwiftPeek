@@ -39,6 +39,7 @@
 ./macos_native/Checks/check-review-fixes.sh macos_native/build/Build/Products/Release
 ./macos_native/Checks/check-mobile-playback.sh macos_native/build/Build/Products/Release
 ./macos_native/Checks/check-follow-sharing.sh macos_native/build/Build/Products/Release
+./macos_native/Checks/check-replay.sh macos_native/build/Build/Products/Release
 ```
 
 Mac 的 Xcode 测试目标可通过 `build-for-testing` 仅编译。`xcodebuild test` 会启动宿主 App；

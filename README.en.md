@@ -62,6 +62,7 @@ See [capture notes](docs/screenshots/README.md).
 - **Focused playback:** HTTP-FLV playback with H.264 / AAC, quality and CDN selection, volume, mute, and fullscreen.
 - **Buffering and background handoff:** approximately four seconds of in-memory media buffering, with fresh credentials and a replacement connection prepared before handoff.
 - **Live chat:** scrolling chat overlays and a chat list, with font size, speed, opacity, display area, and keyword filters.
+- **Replays:** browse a creator's past broadcasts by session and watch them with chat replayed on its original timeline; the scrubber shows chat density and AI chapters, and playback resumes where you left off. [Details (Chinese)](docs/replay.md)
 - **Follows and history:** local storage, plus follow-list files (including watch history) that can be shared through AirDrop and manually merged between Mac and iPhone.
 - **Native interfaces:** SwiftUI, Liquid Glass controls, light and dark appearances, and platform-appropriate window and input behavior.
 
@@ -72,6 +73,7 @@ See [capture notes](docs/screenshots/README.md).
 | Floating playback | System Picture in Picture | An AppKit floating playback window |
 | Background behavior | Follows background-audio and PiP preferences | Stream windows keep playing while browsing the main window |
 | Follow sharing | System share sheet and file import | System share sheet and file import |
+| Replays | List and player pages, landscape fullscreen gestures | Separate replay windows, keyboard shortcuts |
 
 Buffering adds some startup time and live latency. Background handoff aims to reduce visible interruptions; it does not guarantee seamless playback during network outages, platform API changes, or CDN switches.
 Follow sharing is a manual merge, not real-time iCloud synchronization. Importing the same file again does not add duplicates or remove existing follows or history.

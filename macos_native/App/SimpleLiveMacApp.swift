@@ -46,6 +46,21 @@ struct SimpleLiveMacApp: App {
         .restorationBehavior(.disabled)
         .defaultLaunchBehavior(.suppressed)
 
+        WindowGroup("录像", id: "replay", for: ReplayRoute.self) { $route in
+            if let route {
+                MacReplayView(route: route)
+                    .environment(settings)
+                    .environment(library)
+                    .tint(MacDesign.accent)
+                    .preferredColorScheme(settings.data.appearance.colorScheme)
+                    .frame(minWidth: 820, minHeight: 540)
+            }
+        }
+        .defaultSize(width: 1240, height: 800)
+        .windowToolbarStyle(.unifiedCompact)
+        .restorationBehavior(.disabled)
+        .defaultLaunchBehavior(.suppressed)
+
         Settings {
             MacSettingsView()
                 .environment(settings)

@@ -33,9 +33,7 @@ struct RecommendView: View {
                 }
             }
             .navigationTitle("斗鱼推荐")
-            .navigationDestination(for: RoomRoute.self) { route in
-                RoomView(roomID: route.roomID, fallbackTitle: route.title)
-            }
+            .liveDestinations()
             .refreshable { await store.refresh() }
             .task {
                 if store.rooms.isEmpty { await store.refresh() }
@@ -64,9 +62,7 @@ struct CategoryView: View {
             .navigationDestination(for: LiveSubCategory.self) { sub in
                 CategoryRoomsView(category: sub)
             }
-            .navigationDestination(for: RoomRoute.self) { route in
-                RoomView(roomID: route.roomID, fallbackTitle: route.title)
-            }
+            .liveDestinations()
             .overlay {
                 PhaseStateView(phase: store.phase, isEmpty: store.categories.isEmpty) {
                     Task { await store.load() }
@@ -114,6 +110,7 @@ struct CategoryRoomsView: View {
 
 struct SearchView: View {
     @Bindable var store: SearchStore
+    @State private var path = NavigationPath()
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     init(store: SearchStore) {
@@ -123,7 +120,7 @@ struct SearchView: View {
     private var grid: AdaptiveGrid { AdaptiveGrid(horizontalSizeClass: horizontalSizeClass) }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ScrollView {
                 Picker("范围", selection: $store.scope) {
                     ForEach(SearchStore.Scope.allCases) { scope in
@@ -177,11 +174,16 @@ struct SearchView: View {
                 }
             }
             .navigationTitle("搜索")
-            .searchable(text: $store.keyword, prompt: "主播昵称或直播间")
-            .onSubmit(of: .search) { store.search() }
-            .navigationDestination(for: RoomRoute.self) { route in
-                RoomView(roomID: route.roomID, fallbackTitle: route.title)
+            .searchable(text: $store.keyword, prompt: "主播昵称、直播间或录像链接")
+            .onSubmit(of: .search) {
+                // 粘贴的录像链接直接打开，不当作关键词搜索
+                if let replay = DouyuReplayService.parseLink(store.keyword) {
+                    path.append(ReplayRoute(hashID: replay.hashID, start: replay.start))
+                } else {
+                    store.search()
+                }
             }
+            .liveDestinations()
         }
     }
 }

@@ -3,9 +3,14 @@ import SimpleLiveKit
 
 /// 斗鱼核心库联调探针，对应原项目的 simple_live_console。
 /// 用法：douyu-probe [房间号]
+///      douyu-probe replay <房间号|录像链接>
 @main
 struct DouyuProbe {
     static func main() async {
+        if CommandLine.arguments.count > 2, CommandLine.arguments[1] == "replay" {
+            await probeReplay(CommandLine.arguments[2])
+            return
+        }
         let roomID = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "9999"
         let site = DouyuSite()
 
@@ -106,6 +111,58 @@ struct DouyuProbe {
             print("             共收到 \(total) 条弹幕")
 
             print("\n═══ 全部通过 ═══")
+        } catch {
+            print("\n✗ 失败：\(error.localizedDescription)")
+            exit(1)
+        }
+    }
+
+    /// 录像链路：列表 → 信息与取流 → 弹幕窗口 → 章节。只打印地址前缀，不输出完整签名地址。
+    static func probeReplay(_ target: String) async {
+        let service = DouyuReplayService()
+        print("═══ 斗鱼录像联调 ═══")
+        do {
+            var hashID = DouyuReplayService.parseLink(target)?.hashID
+            if hashID == nil {
+                let author = try await service.author(roomID: target)
+                let page = try await service.replays(upID: author.upID, page: 1)
+                print("[0] 主播     \(author.name)（\(author.upID)）")
+                print("[1] 录像列表 \(page.shows.count) 场，hasMore=\(page.hasMore)")
+                for show in page.shows.prefix(3) {
+                    print("             \(show.sessionLabel)（\(show.relativeDate)）\(show.videos.count) 段 · \(show.totalDuration)")
+                }
+                hashID = page.shows.first?.videos.last?.hashID
+            }
+            guard let hashID else { print("没有录像"); return }
+            let source = try await service.source(hashID: hashID)
+            let detail = source.detail
+            print("[2] 录像信息 \(detail.authorName) · \(detail.title)")
+            print("             时长 \(Int(detail.duration))s 播放 \(detail.viewCount) 弹幕 \(detail.danmakuCount) 房间 \(detail.roomID)")
+            for quality in source.qualities {
+                print("             \(quality.name)（\(quality.key)）\(quality.bitRate / 1000)kbps \(quality.url.prefix(48))…")
+            }
+            var start = 0
+            var total = 0
+            var windows = 0
+            while windows < 3 {
+                let batch = try await service.danmaku(hashID: hashID, from: start)
+                windows += 1
+                total += batch.items.count
+                if windows == 1 {
+                    for item in batch.items.prefix(3) {
+                        print("             [\(Int(item.offset))s] \(item.userName)：\(item.text)")
+                    }
+                }
+                guard let next = batch.nextStart else { break }
+                start = next
+            }
+            print("[3] 弹幕     \(windows) 个窗口共 \(total) 条，读到 \(start / 1000)s")
+            let chapters = try await service.chapters(hashID: hashID)
+            print("[4] 章节     \(chapters.count) 个")
+            for chapter in chapters.prefix(5) {
+                print("             \(Int(chapter.start))s \(chapter.isContinued ? "(续) " : "")\(chapter.title)")
+            }
+            print("\n═══ 录像链路通过 ═══")
         } catch {
             print("\n✗ 失败：\(error.localizedDescription)")
             exit(1)

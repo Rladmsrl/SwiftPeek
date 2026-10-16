@@ -5,9 +5,10 @@ import SwiftUI
 
 struct FollowView: View {
     @Environment(LibraryStore.self) private var library
+    @State private var path = NavigationPath()
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             Group {
                 if library.follows.isEmpty {
                     ContentUnavailableView {
@@ -23,6 +24,17 @@ struct FollowView: View {
                             ) {
                                 FollowRow(item: item, isLive: library.liveStatus[item.roomID])
                             }
+                            .contextMenu {
+                                Button("查看录像", systemImage: "play.rectangle.on.rectangle") {
+                                    path.append(ReplayRoute(roomID: item.roomID))
+                                }
+                            }
+                            .swipeActions(edge: .leading) {
+                                Button("录像", systemImage: "play.rectangle.on.rectangle") {
+                                    path.append(ReplayRoute(roomID: item.roomID))
+                                }
+                                .tint(Theme.accent)
+                            }
                         }
                         .onDelete { library.removeFollows(at: $0) }
                     }
@@ -36,9 +48,7 @@ struct FollowView: View {
                 }.padding(12).frame(maxWidth: .infinity).background(.bar)
             }
             .navigationTitle("关注")
-            .navigationDestination(for: RoomRoute.self) { route in
-                RoomView(roomID: route.roomID, fallbackTitle: route.title)
-            }
+            .liveDestinations()
             .toolbar {
                 if !library.follows.isEmpty {
                     ToolbarItem(placement: .topBarTrailing) {
@@ -234,9 +244,7 @@ struct MineView: View {
                 case .history: HistoryView()
                 }
             }
-            .navigationDestination(for: RoomRoute.self) { route in
-                RoomView(roomID: route.roomID, fallbackTitle: route.title)
-            }
+            .liveDestinations()
         }
     }
 

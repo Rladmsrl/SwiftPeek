@@ -48,7 +48,9 @@ struct MacLibraryView: View {
         .background(MacBackdrop())
         .onOpenURL { url in
             if followTransfer.receive(url) { selection = .follows; return }
-            if let id = MacRoomLink.roomID(url.absoluteString) { openRoom(id) }
+            if let replay = DouyuReplayService.parseLink(url.absoluteString) {
+                openWindow(id: "replay", value: ReplayRoute(hashID: replay.hashID, start: replay.start))
+            } else if let id = MacRoomLink.roomID(url.absoluteString) { openRoom(id) }
             else { linkError = "无法识别这个直播间链接" }
         }
         .alert("打开直播间失败", isPresented: Binding(get: { linkError != nil }, set: { if !$0 { linkError = nil } })) {
@@ -151,7 +153,7 @@ struct MacLibraryView: View {
             Spacer(minLength: 8)
             HStack(spacing: 9) {
                 Image(systemName: "magnifyingglass").font(.system(size: 13)).foregroundStyle(.secondary)
-                TextField("搜索主播、房间号或链接", text: $query)
+                TextField("搜索主播、房间号、直播或录像链接", text: $query)
                     .font(.system(size: 12)).textFieldStyle(.plain).focused($searchFocused)
                     .onSubmit(submit).accessibilityIdentifier("roomSearch")
                 if query.isEmpty {
@@ -194,7 +196,7 @@ struct MacLibraryView: View {
         case .categories: "从熟悉的游戏，到未知的新世界。"
         case .follows: "喜欢的主播，都在这里。"
         case .history: "好看的内容，随时回来继续。"
-        case .search: search.keyword.isEmpty ? "输入主播名称、房间号，或直接粘贴直播链接。" : "与「\(search.keyword)」有关的直播"
+        case .search: search.keyword.isEmpty ? "输入主播名称、房间号，或直接粘贴直播 / 录像链接。" : "与「\(search.keyword)」有关的直播"
         }
     }
 
@@ -336,6 +338,8 @@ struct MacLibraryView: View {
                             }.padding(20).macSurface().macHover()
                         }.buttonStyle(.plain)
                             .contextMenu {
+                                Button("查看录像") { openReplays(item.roomID) }
+                                Divider()
                                 Button("取消关注", role: .destructive) {
                                     if let index = library.follows.firstIndex(where: { $0.roomID == item.roomID }) {
                                         library.removeFollows(at: IndexSet(integer: index))
@@ -358,6 +362,8 @@ struct MacLibraryView: View {
                         MacRoomCard(room: LiveRoomItem(roomID: item.roomID, title: item.title, cover: item.cover, userName: item.userName),
                                     live: false, watchedAt: item.watchedAt) { openRoom(item.roomID) }
                             .contextMenu {
+                                Button("查看录像") { openReplays(item.roomID) }
+                                Divider()
                                 Button("删除记录", role: .destructive) {
                                     if let index = library.history.firstIndex(where: { $0.roomID == item.roomID }) {
                                         library.removeHistory(at: IndexSet(integer: index))
@@ -403,7 +409,13 @@ struct MacLibraryView: View {
         return live ? "直播中" : "未开播"
     }
     private func openRoom(_ id: String) { openWindow(id: "room", value: id) }
+    private func openReplays(_ roomID: String) { openWindow(id: "replay", value: ReplayRoute(roomID: roomID)) }
     private func submit() {
+        if let replay = DouyuReplayService.parseLink(query) {
+            openWindow(id: "replay", value: ReplayRoute(hashID: replay.hashID, start: replay.start))
+            query = ""
+            return
+        }
         if let id = MacRoomLink.roomID(query) { openRoom(id); return }
         search.keyword = query
         selection = .search

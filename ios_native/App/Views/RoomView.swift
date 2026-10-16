@@ -60,6 +60,14 @@ struct RoomView: View {
         .statusBarHidden(isFullscreen)
         .persistentSystemOverlays(isFullscreen ? .hidden : .automatic)
         .toolbar {
+            // 用文字而不是图标：录像入口没有约定俗成的符号，图标容易看不懂
+            ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink(value: ReplayRoute(roomID: store.detail?.roomID ?? roomID)) {
+                    Text("录像")
+                }
+                .accessibilityLabel("查看主播的直播录像")
+            }
+            ToolbarSpacer(.fixed, placement: .topBarTrailing)
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     guard let detail = store.detail else { return }
@@ -350,7 +358,15 @@ struct RoomView: View {
                     .font(.largeTitle)
                 Text(store.detail?.isRecord == true ? "当前为轮播内容" : "主播未开播")
                     .font(.subheadline)
-                Button("重新查询") { playback.play() }.buttonStyle(.glass)
+                // 没开播时最需要录像，在这里给出明显入口
+                HStack(spacing: 10) {
+                    Button("重新查询") { playback.play() }.buttonStyle(.glass)
+                    NavigationLink(value: ReplayRoute(roomID: store.detail?.roomID ?? roomID)) {
+                        Label("看录像", systemImage: "play.rectangle.on.rectangle")
+                    }
+                    .buttonStyle(.glassProminent)
+                }
+                .font(.subheadline)
             }
             .foregroundStyle(.white.opacity(0.85))
 

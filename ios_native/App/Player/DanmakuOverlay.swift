@@ -85,6 +85,30 @@ final class DanmakuHostView: DanmakuPlatformView {
         trackAvailableAt = Array(repeating: 0, count: count)
     }
 
+    /// 录像暂停时冻结飞行中的弹幕：把图层时间停住，恢复时接着走。
+    /// 轨道占用表按绝对时间记录，恢复时整体顺延暂停的时长。
+    private var pausedAt: CFTimeInterval?
+
+    func setPaused(_ paused: Bool) {
+        guard paused != (pausedAt != nil) else { return }
+        let layer = drawingLayer
+        let now = CACurrentMediaTime()
+        if paused {
+            layer.timeOffset = layer.convertTime(now, from: nil)
+            layer.speed = 0
+            pausedAt = now
+        } else if let pausedAt {
+            let frozen = layer.timeOffset
+            layer.speed = 1
+            layer.timeOffset = 0
+            layer.beginTime = 0
+            layer.beginTime = layer.convertTime(now, from: nil) - frozen
+            let elapsed = now - pausedAt
+            trackAvailableAt = trackAvailableAt.map { $0 + elapsed }
+            self.pausedAt = nil
+        }
+    }
+
     func clear() {
         drawingLayer.sublayers?.forEach {
             $0.removeAllAnimations()
@@ -153,10 +177,21 @@ struct DanmakuOverlay {
     let messages: [LiveMessage]
     var settings = DanmakuSettings()
     var isVisible: Bool
+    /// 录像拖动进度时自增，清掉屏上旧弹幕
+    var clearToken = 0
+    /// 录像暂停时冻结弹幕
+    var isPaused = false
 
     private func update(_ uiView: DanmakuHostView, coordinator: Coordinator) {
         uiView.apply(settings)
         uiView.isHidden = !isVisible
+        uiView.setPaused(isPaused)
+        if coordinator.clearToken != clearToken {
+            coordinator.clearToken = clearToken
+            coordinator.consumed = nil
+            coordinator.didClear = true
+            uiView.clear()
+        }
 
         guard isVisible else {
             coordinator.consumed = messages.last?.id
@@ -168,10 +203,14 @@ struct DanmakuOverlay {
         if let consumed = coordinator.consumed,
            let index = messages.lastIndex(where: { $0.id == consumed }) {
             pending = Array(messages[(index + 1)...])
+        } else if coordinator.didClear {
+            // 清屏后的消息都是新位置之后的，全部投放
+            pending = messages
         } else {
             // 首次进入只渲染最近几条，避免一次性灌入历史弹幕
             pending = Array(messages.suffix(5))
         }
+        if !messages.isEmpty { coordinator.didClear = false }
 
         for message in pending {
             uiView.emit(
@@ -191,6 +230,8 @@ struct DanmakuOverlay {
 
     final class Coordinator {
         var consumed: UUID?
+        var clearToken = 0
+        var didClear = false
     }
 }
 
