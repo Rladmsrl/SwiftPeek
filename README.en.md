@@ -5,12 +5,12 @@
 <h1 align="center">SwiftPeek</h1>
 
 <p align="center"><strong>Just live. Natively.</strong></p>
-<p align="center">A focused live-streaming viewer built with Swift for iPhone, iPad, and Mac.</p>
+<p align="center">Live streams and replays, built with Swift for iPhone, iPad, and Mac.</p>
 <p align="center">Swift · SwiftUI · iOS 26+ · macOS 27+ · GPL-3.0</p>
 
 <p align="center"><a href="README.md">简体中文</a> · English</p>
 
-Open the app and see who's live. SwiftPeek keeps watching streams simple: find a creator, start watching, and save a follow.
+See who's live, or catch up on a replay. SwiftPeek brings streams, replays, and chat together, with a timeline and AI chapters to help you find the moments you want to watch.
 
 > **Standing on the shoulders of giants—and AI.**
 >
@@ -26,31 +26,54 @@ The project is still evolving. Feedback from actual playback, background transit
 
 ## Screenshots
 
-### macOS
+### Watch live · Video and chat together
 
-A native sidebar, stream cards, and Liquid Glass controls.
+Switch quality and CDN while watching, with scrolling chat and a synchronized chat list. Mac uses a separate playback window; iPhone supports landscape viewing and touch gestures. Open a creator's past broadcasts directly from the replay button in their live room.
 
-<p align="center">
-  <img src="docs/screenshots/macos-discover.png" width="960" alt="SwiftPeek macOS discovery screen with sidebar, featured stream, and stream cards" />
-</p>
+<table>
+  <tr><th>macOS · Separate stream window</th><th>iOS · Video and live chat</th></tr>
+  <tr>
+    <td width="72%" valign="top"><img src="docs/screenshots/macos-live.png" width="680" alt="SwiftPeek macOS stream window with gameplay, scrolling chat, and a live chat sidebar" /></td>
+    <td width="28%" valign="top"><img src="docs/screenshots/ios-live.png" width="260" alt="SwiftPeek iOS stream page with quality and CDN controls, live chat, and the replay button at the top right" /></td>
+  </tr>
+</table>
+
+### Watch replays · Find the moment on the timeline
+
+Chat plays back on its original timeline. Chat density and chapter markers help you find busy moments, while AI chapters provide event titles and summaries you can tap to jump straight to a segment.
+
+<table>
+  <tr><th>macOS · Chat density and AI chapters</th><th>iOS · Replay and event summaries</th></tr>
+  <tr>
+    <td width="72%" valign="top"><img src="docs/screenshots/macos-replay.png" width="680" alt="SwiftPeek macOS replay window with timed chat, a density curve, chapter markers, a chapter hover preview, and AI event summaries" /></td>
+    <td width="28%" valign="top"><img src="docs/screenshots/ios-replay.png" width="260" alt="SwiftPeek iOS replay page with timed chat, playback progress, the current event title, and tappable AI chapter summaries" /></td>
+  </tr>
+</table>
+
+- **Find a moment:** hover over the Mac timeline to preview a time and chapter title; tap a chapter on either platform to seek, with the current chapter highlighted.
+- **Pick up where you left off:** saved progress per segment, 0.5×–2× speed, and automatic continuation to the next segment of the broadcast.
+- **Chat follows playback:** pause freezes chat, seeking realigns it, and timestamps in the chat list let you jump to a comment.
+
+Douyu provides AI chapters for some replays, including event titles and summaries. These are not speech subtitles. See [replay details (Chinese)](docs/replay.md).
 
 <details>
-<summary>View categories and playback settings in dark mode</summary>
+<summary>More screens · Discover and categories</summary>
 
-<p align="center">
-  <img src="docs/screenshots/macos-categories.png" width="960" alt="SwiftPeek macOS category browser with filters and game cards" />
-</p>
-<p align="center">
-  <img src="docs/screenshots/macos-settings.png" width="620" alt="SwiftPeek macOS playback settings in dark mode, including quality, buffering, and keyboard shortcuts" />
-</p>
+| macOS | iOS |
+| :---: | :---: |
+| <img src="docs/screenshots/macos-discover.png" width="680" alt="SwiftPeek macOS discovery screen" /> | <img src="docs/screenshots/ios-discover.png" width="260" alt="SwiftPeek iOS discovery screen" /> |
+| <img src="docs/screenshots/macos-categories.png" width="680" alt="SwiftPeek macOS category browser" /> | <img src="docs/screenshots/ios-categories.png" width="260" alt="SwiftPeek iOS category browser" /> |
 
 </details>
 
-### iOS
+<details>
+<summary>More screens · Playback and chat settings</summary>
 
-| Discover | Categories | Playback and chat settings |
-| :---: | :---: | :---: |
-| <img src="docs/screenshots/ios-discover.png" width="260" alt="SwiftPeek iOS discovery screen" /> | <img src="docs/screenshots/ios-categories.png" width="260" alt="SwiftPeek iOS category browser" /> | <img src="docs/screenshots/ios-settings.png" width="260" alt="SwiftPeek iOS playback and chat settings" /> |
+| macOS · Dark appearance | iOS |
+| :---: | :---: |
+| <img src="docs/screenshots/macos-settings.png" width="620" alt="SwiftPeek macOS playback settings in dark mode, including quality, buffering, and keyboard shortcuts" /> | <img src="docs/screenshots/ios-settings.png" width="260" alt="SwiftPeek iOS playback and chat settings" /> |
+
+</details>
 
 These are actual v0.5.0 screenshots, captured in the iOS Simulator and native macOS app windows.
 Stream covers and titles are public content at capture time and may change. Screenshots do not establish sustained playback reliability.

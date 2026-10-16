@@ -5,12 +5,12 @@
 <h1 align="center">SwiftPeek</h1>
 
 <p align="center"><strong>Just live. Natively.</strong></p>
-<p align="center">用 Swift 打造，为 iPhone、iPad 和 Mac 而生的纯粹直播客户端。</p>
+<p align="center">用 Swift 打造，在 iPhone、iPad 和 Mac 上看直播，也回看精彩。</p>
 <p align="center">Swift · SwiftUI · iOS 26+ · macOS 27+ · GPL-3.0</p>
 
 <p align="center">简体中文 · <a href="README.en.md">English</a></p>
 
-打开，看看谁在播。SwiftPeek 希望把看直播这件事做得简单一点：找到喜欢的主播，点开播放，留下关注。
+打开，看看谁在播；错过了，就回看录像。SwiftPeek 把直播、录像和弹幕放在一起，用时间轴与 AI 章节帮你找到想看的片段。
 
 > **站在巨人和 AI 的肩膀上。**
 >
@@ -25,31 +25,54 @@
 
 ## 界面预览
 
-### macOS
+### 看直播 · 画面与弹幕，一起看
 
-原生侧边栏、直播卡片与 Liquid Glass 控件。
+清晰度与线路随时切换，滚动弹幕和弹幕列表同步呈现。Mac 使用独立播放窗口，iPhone 支持横屏与触控手势；直播间里的“录像”按钮可直接打开主播的往期内容。
 
-<p align="center">
-  <img src="docs/screenshots/macos-discover.png" width="960" alt="SwiftPeek macOS 推荐首页：侧边栏、精选直播和直播卡片" />
-</p>
+<table>
+  <tr><th>macOS · 独立直播窗口</th><th>iOS · 直播与实时弹幕</th></tr>
+  <tr>
+    <td width="72%" valign="top"><img src="docs/screenshots/macos-live.png" width="680" alt="SwiftPeek macOS 直播窗口：游戏画面、滚动弹幕和右侧实时弹幕列表" /></td>
+    <td width="28%" valign="top"><img src="docs/screenshots/ios-live.png" width="260" alt="SwiftPeek iOS 直播页：画质与线路切换、实时弹幕列表和右上角录像入口" /></td>
+  </tr>
+</table>
+
+### 看录像 · 沿着时间轴，找到精彩
+
+回看时，弹幕按原时间轴重放。进度条用弹幕热度和章节刻度提示精彩位置，AI 章节列出事件标题与摘要，点一下就能跳到对应片段。
+
+<table>
+  <tr><th>macOS · 热度时间轴与 AI 章节</th><th>iOS · 录像播放与事件摘要</th></tr>
+  <tr>
+    <td width="72%" valign="top"><img src="docs/screenshots/macos-replay.png" width="680" alt="SwiftPeek macOS 录像窗口：弹幕回放、热度曲线、章节刻度、悬停章节标题与右侧 AI 事件摘要" /></td>
+    <td width="28%" valign="top"><img src="docs/screenshots/ios-replay.png" width="260" alt="SwiftPeek iOS 录像页：同步弹幕、播放进度、当前事件标题和可点击跳转的 AI 章节摘要" /></td>
+  </tr>
+</table>
+
+- **找片段**：Mac 悬停时间轴可预览时间与章节标题；两端都可点击章节跳转，当前章节会高亮。
+- **接着看**：记住每段观看进度，支持 0.5×–2× 倍速，同场录像播完自动接下一段。
+- **弹幕跟着走**：暂停时弹幕一起停住，拖动后从新位置继续，也可点弹幕列表的时间跳转。
+
+AI 章节由斗鱼为部分录像提供，包含事件标题与摘要，并非语音字幕。完整功能见[录像回放说明](docs/replay.md)。
 
 <details>
-<summary>查看分类浏览与深色播放设置</summary>
+<summary>更多界面 · 推荐与分类浏览</summary>
 
-<p align="center">
-  <img src="docs/screenshots/macos-categories.png" width="960" alt="SwiftPeek macOS 分类浏览：分类筛选和游戏卡片" />
-</p>
-<p align="center">
-  <img src="docs/screenshots/macos-settings.png" width="620" alt="SwiftPeek macOS 深色播放设置：清晰度、自动播放、缓冲说明和快捷键" />
-</p>
+| macOS | iOS |
+| :---: | :---: |
+| <img src="docs/screenshots/macos-discover.png" width="680" alt="SwiftPeek macOS 推荐首页" /> | <img src="docs/screenshots/ios-discover.png" width="260" alt="SwiftPeek iOS 推荐首页" /> |
+| <img src="docs/screenshots/macos-categories.png" width="680" alt="SwiftPeek macOS 分类浏览" /> | <img src="docs/screenshots/ios-categories.png" width="260" alt="SwiftPeek iOS 分类浏览" /> |
 
 </details>
 
-### iOS
+<details>
+<summary>更多界面 · 播放与弹幕设置</summary>
 
-| 推荐首页 | 分类浏览 | 播放与弹幕设置 |
-| :---: | :---: | :---: |
-| <img src="docs/screenshots/ios-discover.png" width="260" alt="SwiftPeek iOS 推荐首页" /> | <img src="docs/screenshots/ios-categories.png" width="260" alt="SwiftPeek iOS 分类浏览" /> | <img src="docs/screenshots/ios-settings.png" width="260" alt="SwiftPeek iOS 播放与弹幕设置" /> |
+| macOS · 深色外观 | iOS |
+| :---: | :---: |
+| <img src="docs/screenshots/macos-settings.png" width="620" alt="SwiftPeek macOS 深色播放设置：清晰度、缓冲说明和快捷键" /> | <img src="docs/screenshots/ios-settings.png" width="260" alt="SwiftPeek iOS 播放与弹幕设置" /> |
+
+</details>
 
 以上为 v0.5.0 实际界面截图：iOS 来自模拟器，macOS 来自原生应用窗口。
 直播封面与标题为截图时的公开内容，会随平台更新；截图不代表持续播放稳定性验证。
