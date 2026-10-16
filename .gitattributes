@@ -1,0 +1,5 @@
+# Upstream Dart/Flutter migration references are not part of the native apps.
+reference/** linguist-vendored
+
+# Bundled third-party JavaScript is a runtime dependency, not project-authored code.
+ios_native/SimpleLiveKit/Sources/SimpleLiveKit/Resources/crypto-js.js linguist-vendored

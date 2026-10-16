@@ -8,6 +8,8 @@
 <p align="center">用 Swift 打造，为 iPhone、iPad 和 Mac 而生的纯粹直播客户端。</p>
 <p align="center">Swift · SwiftUI · iOS 26+ · macOS 27+ · GPL-3.0</p>
 
+<p align="center">简体中文 · <a href="README.en.md">English</a></p>
+
 打开，看看谁在播。SwiftPeek 希望把看直播这件事做得简单一点：找到喜欢的主播，点开播放，留下关注。
 
 > **站在巨人和 AI 的肩膀上。**
@@ -18,6 +20,7 @@
 > 感谢原作者、所有上游贡献者，以及帮助这个项目成形的开源社区与 AI 工具。
 
 **当前原生版本只接入斗鱼。** 仓库中其他平台的 Dart 代码属于迁移参考，不代表已经支持。
+`reference/` 不参与原生 App 构建，并通过 `.gitattributes` 标记为第三方代码，不计入 GitHub 语言统计。
 项目仍在迭代，持续播放、后台切换与跨设备分享欢迎通过实际使用反馈完善。
 
 ## 能做什么
@@ -149,6 +152,21 @@ SwiftPeek/
 
 愿意参与其他站点迁移的话，可以从 `reference/` 与 `SimpleLiveKit` 的 `LiveSite` 协议开始。
 
+## 声明
+
+以下沿用 [Simple Live 上游 README 的声明](https://github.com/xiaoyaocz/dart_simple_live#声明)：
+
+> 本项目的所有功能都是基于互联网上公开的资料开发，无任何破解、逆向工程等行为。
+>
+> 本项目仅用于学习交流编程技术，严禁将本项目用于商业目的。如有任何商业行为，均与本项目无关。
+>
+> 如果本项目存在侵犯您的合法权益的情况，请及时与开发者联系，开发者将会及时删除有关内容。
+
+可通过本仓库的 [Issues](https://github.com/Rladmsrl/SwiftPeek/issues) 联系维护者；请勿在公开 Issue 中上传个人敏感信息。
+
+**许可证说明：** 上述文字保留上游的项目用途与维护立场；代码的使用、修改和分发权利以 [GPL-3.0](LICENSE) 为准。
+GPL-3.0 允许商业使用，上述用途声明不构成对 GPL 授权的额外限制，参见 [GNU GPL FAQ](https://www.gnu.org/licenses/gpl-faq.html#NoMilitary)。
+
 ## 许可与致谢
 
 沿用上游 **GPL-3.0**，许可证全文见 [LICENSE](LICENSE)。
@@ -156,5 +174,7 @@ SwiftPeek/
 
 特别感谢 **[xiaoyaocz](https://github.com/xiaoyaocz)**、**[Simple Live](https://github.com/xiaoyaocz/dart_simple_live)**
 及所有贡献者。也感谢 CryptoJS、Tars 等相关开源项目，以及协助这个项目迭代的 AI 工具。
+
+感谢 **[LINUX DO](https://linux.do/) 社区** 的交流与分享。
 
 **站在巨人和 AI 的肩膀上，把看直播这件小事做好。**
