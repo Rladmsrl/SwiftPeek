@@ -11,6 +11,16 @@
 - `DEVELOPER_DIR` 可指定完整 Xcode 的 Developer 目录，避免只使用 Command Line Tools。
 - 当前共享媒体代码包含 SDK 已标记弃用但仍可编译的 AVFoundation 队列 API；后续迁移需要单独验证播放语义。
 
+## 本地隐私与提交
+
+个人 Apple ID、签名团队、证书、设备标识、私有邮箱及真实播放凭据不得写入公开源码或文档。
+签名覆盖配置使用 `*.local.xcconfig`，设备信息和诊断导出统一存放在仓库根目录的 `.local/` 中；
+这些文件以及生成的 Xcode 工程、证书、描述文件、日志与诊断报告已加入 `.gitignore`。
+
+`.gitignore` 无法过滤已跟踪文件中的隐私内容。提交前仍需检查暂存区差异，并在工具可用时运行密钥扫描。
+`Info.plist` 保持版本控制，不提交仅为本机 Xcode 签名产生的配置迁移；个人签名设置留在生成工程中。
+后续自动化开发与提交遵循根目录的 `AGENTS.md`。
+
 ## 离线检查
 
 核心库：在 `ios_native/SimpleLiveKit` 下执行 `swift test`。

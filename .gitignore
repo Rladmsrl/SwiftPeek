@@ -14,25 +14,46 @@ xcuserdata/
 *.xcarchive/
 *.ipa
 *.dSYM/
+*.xcodeproj/
+*.xcworkspace/
+*.xcresult/
+*.xccheckout
+*.xcscmblueprint
 
 # Local identities, signing material and credentials
 .env
 .env.*
 !.env.example
 *.p12
+*.pfx
 *.p8
 *.pem
 *.key
+*.cer
+*.crt
+*.der
+*.csr
 *.mobileprovision
 *.provisionprofile
 *.jks
 *.keystore
 *.keychain*
 *.xcconfig.local
+*.local.xcconfig
+Local.xcconfig
+ExportOptions*.plist
+signing.local.*
+devices.local.*
+credentials.local.*
+secrets.local.*
 
 # Personal runtime data and transferred follow snapshots
 *.log
 *.jsonl
+*.crash
+*.ips
+*.trace/
+*.logarchive/
 *.sqlite
 *.sqlite3
 *.db
