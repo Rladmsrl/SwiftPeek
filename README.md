@@ -23,6 +23,38 @@
 `reference/` 不参与原生 App 构建，并通过 `.gitattributes` 标记为第三方代码，不计入 GitHub 语言统计。
 项目仍在迭代，持续播放、后台切换与跨设备分享欢迎通过实际使用反馈完善。
 
+## 界面预览
+
+### macOS
+
+原生侧边栏、直播卡片与 Liquid Glass 控件。
+
+<p align="center">
+  <img src="docs/screenshots/macos-discover.png" width="960" alt="SwiftPeek macOS 推荐首页：侧边栏、精选直播和直播卡片" />
+</p>
+
+<details>
+<summary>查看分类浏览与深色播放设置</summary>
+
+<p align="center">
+  <img src="docs/screenshots/macos-categories.png" width="960" alt="SwiftPeek macOS 分类浏览：分类筛选和游戏卡片" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/macos-settings.png" width="620" alt="SwiftPeek macOS 深色播放设置：清晰度、自动播放、缓冲说明和快捷键" />
+</p>
+
+</details>
+
+### iOS
+
+| 推荐首页 | 分类浏览 | 播放与弹幕设置 |
+| :---: | :---: | :---: |
+| <img src="docs/screenshots/ios-discover.png" width="260" alt="SwiftPeek iOS 推荐首页" /> | <img src="docs/screenshots/ios-categories.png" width="260" alt="SwiftPeek iOS 分类浏览" /> | <img src="docs/screenshots/ios-settings.png" width="260" alt="SwiftPeek iOS 播放与弹幕设置" /> |
+
+以上为 v0.5.0 实际界面截图：iOS 来自模拟器，macOS 来自原生应用窗口。
+直播封面与标题为截图时的公开内容，会随平台更新；截图不代表持续播放稳定性验证。
+[截图环境与说明](docs/screenshots/README.md)。
+
 ## 能做什么
 
 - **浏览直播**：推荐、分类、直播间与主播搜索，支持房间号和链接打开。

@@ -24,6 +24,38 @@ Open the app and see who's live. SwiftPeek keeps watching streams simple: find a
 The `reference/` directory is excluded from native builds and marked as vendored code in `.gitattributes`, so it does not count toward GitHub's language statistics.
 The project is still evolving. Feedback from actual playback, background transitions, and cross-device sharing is welcome.
 
+## Screenshots
+
+### macOS
+
+A native sidebar, stream cards, and Liquid Glass controls.
+
+<p align="center">
+  <img src="docs/screenshots/macos-discover.png" width="960" alt="SwiftPeek macOS discovery screen with sidebar, featured stream, and stream cards" />
+</p>
+
+<details>
+<summary>View categories and playback settings in dark mode</summary>
+
+<p align="center">
+  <img src="docs/screenshots/macos-categories.png" width="960" alt="SwiftPeek macOS category browser with filters and game cards" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/macos-settings.png" width="620" alt="SwiftPeek macOS playback settings in dark mode, including quality, buffering, and keyboard shortcuts" />
+</p>
+
+</details>
+
+### iOS
+
+| Discover | Categories | Playback and chat settings |
+| :---: | :---: | :---: |
+| <img src="docs/screenshots/ios-discover.png" width="260" alt="SwiftPeek iOS discovery screen" /> | <img src="docs/screenshots/ios-categories.png" width="260" alt="SwiftPeek iOS category browser" /> | <img src="docs/screenshots/ios-settings.png" width="260" alt="SwiftPeek iOS playback and chat settings" /> |
+
+These are actual v0.5.0 screenshots, captured in the iOS Simulator and native macOS app windows.
+Stream covers and titles are public content at capture time and may change. Screenshots do not establish sustained playback reliability.
+See [capture notes](docs/screenshots/README.md).
+
 ## Features
 
 - **Browse streams:** recommendations, categories, room and creator search, and opening rooms by ID or link.
