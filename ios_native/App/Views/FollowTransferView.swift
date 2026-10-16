@@ -38,9 +38,10 @@ struct FollowTransferActions: View {
     var body: some View {
         HStack(spacing: 10) {
             ShareLink(item: SharedFollows(document: library.exportFollows()),
-                      preview: SharePreview("SwiftPeek · \(library.follows.count) 个关注", image: Image(systemName: "heart.circle"))) {
+                      preview: SharePreview("SwiftPeek · \(library.follows.count) 个关注 · \(library.history.count) 条历史",
+                                            image: Image(systemName: "heart.circle"))) {
                 Label("分享关注", systemImage: "square.and.arrow.up")
-            }.disabled(library.follows.isEmpty)
+            }.disabled(library.follows.isEmpty && library.history.isEmpty)
             Button { importing = true } label: { Label("导入关注", systemImage: "square.and.arrow.down") }
                 .disabled(transfer.isReading)
         }
@@ -60,28 +61,37 @@ struct FollowImportPreviewView: View {
     let preview: FollowImportPreview
     @Environment(LibraryStore.self) private var library
     @Environment(FollowTransferController.self) private var transfer
+    @Environment(AppSettings.self) private var settings
     @State private var importError: String?
 
     private var existing: Set<String> { Set(library.follows.map(\.roomID)) }
     private var additions: [FollowTransferRoom] { preview.document.additions(existingIDs: existing) }
     private var repeated: Int { preview.document.uniqueCount - additions.count }
+    private var historyEnabled: Bool { settings.data.historyEnabled }
+    private var historyUpdates: [FollowTransferHistory] {
+        historyEnabled ? library.historyUpdates(from: preview.document) : []
+    }
+    private var hasChanges: Bool { !additions.isEmpty || !historyUpdates.isEmpty }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             HStack(spacing: 12) {
                 Image(systemName: "heart.circle.fill").font(.system(size: 36)).foregroundStyle(Theme.accent)
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("合并关注").font(.title2.bold())
-                    Text("只添加缺少的主播，保留本机已有关注。")
+                    Text("合并关注与历史").font(.title2.bold())
+                    Text("只添加缺少的主播和更新的观看记录，保留本机已有数据。")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
             }
             HStack(spacing: 18) {
                 Label("新增 \(additions.count)", systemImage: "plus.circle").foregroundStyle(Theme.accent)
                 Label("已关注 \(repeated)", systemImage: "checkmark.circle").foregroundStyle(.secondary)
+                if !historyUpdates.isEmpty {
+                    Label("历史 \(historyUpdates.count)", systemImage: "clock.arrow.circlepath").foregroundStyle(Theme.accent)
+                }
             }.font(.subheadline.weight(.medium))
             if additions.isEmpty {
-                ContentUnavailableView(preview.document.uniqueCount == 0 ? "文件中没有关注" : "这些主播已经在关注列表中", systemImage: "checkmark.circle")
+                ContentUnavailableView(emptyTitle, systemImage: "checkmark.circle")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
@@ -100,18 +110,21 @@ struct FollowImportPreviewView: View {
                 }
             }
             if let importError { Text(importError).font(.caption).foregroundStyle(.red) }
-            Text("不会删除关注，也不会导入观看历史、设置或账号信息。")
+            Text(historyEnabled || preview.document.historyRecords.isEmpty
+                 ? "不会删除关注或历史，也不会导入设置或账号信息。"
+                 : "已在设置中关闭观看历史，文件中的历史不会导入。")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
-                Button(additions.isEmpty ? "完成" : "取消") { transfer.pending = nil }
+                Button(hasChanges ? "取消" : "完成") { transfer.pending = nil }
                     .buttonStyle(.glass)
                 Spacer()
-                if !additions.isEmpty {
-                    Button("合并 \(additions.count) 个关注") {
+                if hasChanges {
+                    Button("合并") {
                         do {
-                            let count = try library.mergeFollows(preview.document)
-                            transfer.didMerge(count: count)
-                        } catch { importError = "未能保存关注：\(error.localizedDescription)" }
+                            let merged = try library.mergeFollows(
+                                preview.document, historyLimit: historyEnabled ? settings.data.historyLimit : nil)
+                            transfer.didMerge(follows: merged.follows, history: merged.history)
+                        } catch { importError = "未能保存：\(error.localizedDescription)" }
                     }.buttonStyle(.glassProminent).tint(Theme.accent)
                 }
             }
@@ -123,18 +136,24 @@ struct FollowImportPreviewView: View {
         .presentationDragIndicator(.visible)
         #endif
     }
+
+    private var emptyTitle: String {
+        if !historyUpdates.isEmpty { return "关注无变化，将只合并观看历史" }
+        return preview.document.uniqueCount == 0 ? "文件中没有关注" : "这些主播已经在关注列表中"
+    }
 }
 
 private struct FollowTransferPresentation: ViewModifier {
     @Environment(FollowTransferController.self) private var transfer
     @Environment(LibraryStore.self) private var library
+    @Environment(AppSettings.self) private var settings
     func body(content: Content) -> some View {
         @Bindable var transfer = transfer
         content
             .sheet(item: $transfer.pending, onDismiss: { transfer.previewDismissed() }) { preview in
-                FollowImportPreviewView(preview: preview).environment(library).environment(transfer)
+                FollowImportPreviewView(preview: preview).environment(library).environment(transfer).environment(settings)
             }
-            .alert(transfer.errorMessage != nil ? "无法导入关注" : "关注已合并", isPresented: Binding(
+            .alert(transfer.errorMessage != nil ? "无法导入" : "合并完成", isPresented: Binding(
                 get: { transfer.pending == nil && (transfer.errorMessage != nil || transfer.completionMessage != nil) },
                 set: { if !$0 { transfer.errorMessage = nil; transfer.completionMessage = nil } }
             )) {

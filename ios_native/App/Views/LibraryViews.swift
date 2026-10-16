@@ -31,7 +31,7 @@ struct FollowView: View {
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: 7) {
                     FollowTransferActions().buttonStyle(.glass).controlSize(.regular)
-                    Text("通过隔空投送，把关注合并到另一台设备")
+                    Text("通过隔空投送，把关注和观看历史合并到另一台设备")
                         .font(.caption2).foregroundStyle(.secondary)
                 }.padding(12).frame(maxWidth: .infinity).background(.bar)
             }

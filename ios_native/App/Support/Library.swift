@@ -151,27 +151,52 @@ final class LibraryStore {
     // MARK: 跨设备关注分享
 
     func exportFollows() -> FollowTransferDocument {
-        FollowTransferDocument(rooms: follows.map {
-            FollowTransferRoom(roomID: $0.roomID, userName: $0.userName, title: $0.title, avatar: $0.avatar)
-        })
+        FollowTransferDocument(
+            rooms: follows.map {
+                FollowTransferRoom(roomID: $0.roomID, userName: $0.userName, title: $0.title, avatar: $0.avatar)
+            },
+            history: history.map {
+                FollowTransferHistory(roomID: $0.roomID, userName: $0.userName, title: $0.title, cover: $0.cover, watchedAt: $0.watchedAt)
+            }
+        )
+    }
+
+    /// 导入的历史中比本机更新的条目（同一房间取最近一次观看）。
+    func historyUpdates(from document: FollowTransferDocument) -> [FollowTransferHistory] {
+        document.historyUpdates(existing: Dictionary(history.map { ($0.roomID, $0.watchedAt) }, uniquingKeysWith: max))
     }
 
     /// Recompute additions at confirmation time. Persist first, then publish;
     /// failure must not leave the UI claiming an import that was never saved.
-    @discardableResult
-    func mergeFollows(_ document: FollowTransferDocument) throws -> Int {
+    /// History is merged by roomID keeping the newest watch, then trimmed to `historyLimit`;
+    /// pass `historyLimit: nil` to leave local history untouched.
+    func mergeFollows(_ document: FollowTransferDocument, historyLimit: Int?) throws -> (follows: Int, history: Int) {
         // Even programmatically created documents must pass the same validation.
         _ = try document.encoded()
         let added = document.additions(existingIDs: Set(follows.map(\.roomID)))
-        guard !added.isEmpty else { return 0 }
-        let importedAt = Date()
-        let merged = added.map {
-            FollowedRoom(roomID: $0.roomID, userName: $0.userName, avatar: $0.avatar, title: $0.title, addedAt: importedAt)
-        } + follows
-        let bytes = try JSONEncoder().encode(merged)
-        try bytes.write(to: followsURL, options: .atomic)
-        follows = merged
-        return added.count
+        let updates = historyLimit == nil ? [] : historyUpdates(from: document)
+
+        if !added.isEmpty {
+            let importedAt = Date()
+            let merged = added.map {
+                FollowedRoom(roomID: $0.roomID, userName: $0.userName, avatar: $0.avatar, title: $0.title, addedAt: importedAt)
+            } + follows
+            try JSONEncoder().encode(merged).write(to: followsURL, options: .atomic)
+            follows = merged
+        }
+        var keptHistory = 0
+        if let historyLimit, !updates.isEmpty {
+            let updatedIDs = Set(updates.map(\.roomID))
+            var merged = history.filter { !updatedIDs.contains($0.roomID) } + updates.map {
+                HistoryRecord(roomID: $0.roomID, userName: $0.userName, title: $0.title, cover: $0.cover, watchedAt: $0.watchedAt)
+            }
+            merged.sort { $0.watchedAt > $1.watchedAt }
+            if merged.count > historyLimit { merged.removeLast(merged.count - historyLimit) }
+            keptHistory = merged.lazy.filter { updatedIDs.contains($0.roomID) }.count
+            try JSONEncoder().encode(merged).write(to: historyURL, options: .atomic)
+            history = merged
+        }
+        return (added.count, keptHistory)
     }
 
     // MARK: 历史

@@ -303,7 +303,7 @@ struct MacLibraryView: View {
         VStack(alignment: .leading, spacing: 20) {
             HStack {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("把关注带到另一台设备").font(.system(size: 13, weight: .medium))
+                    Text("把关注和观看历史带到另一台设备").font(.system(size: 13, weight: .medium))
                     Text("分享 → 隔空投送 → 接收后合并").font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 Spacer()

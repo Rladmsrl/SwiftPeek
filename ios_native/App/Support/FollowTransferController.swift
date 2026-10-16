@@ -17,8 +17,11 @@ final class FollowTransferController {
     private var generation = 0
     private var queuedCompletion: String?
 
-    func didMerge(count: Int) {
-        queuedCompletion = "已添加 \(count) 个关注，原有关注已保留。"
+    func didMerge(follows: Int, history: Int) {
+        var parts: [String] = []
+        if follows > 0 { parts.append("\(follows) 个关注") }
+        if history > 0 { parts.append("\(history) 条观看历史") }
+        queuedCompletion = parts.isEmpty ? "没有需要合并的内容。" : "已合并 \(parts.joined(separator: "、"))，原有数据已保留。"
         pending = nil
     }
 
