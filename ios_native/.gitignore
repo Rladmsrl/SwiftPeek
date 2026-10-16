@@ -1,0 +1,12 @@
+# Xcode / SwiftPM 构建产物
+.build/
+.swiftpm/
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+
+# xcodegen 从 project.yml 生成，不入库
+SimpleLive.xcodeproj/
+
+.DS_Store

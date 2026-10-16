@@ -1,0 +1,93 @@
+name: SimpleLive
+options:
+  bundleIdPrefix: com.simplelive
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+packages:
+  SimpleLiveKit:
+    path: SimpleLiveKit
+
+targets:
+  SimpleLive:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+      - path: ../THIRD_PARTY_NOTICES.md
+        buildPhase: resources
+      - path: ../LICENSE
+        buildPhase: resources
+      - path: ../shared/Branding.xcassets
+    dependencies:
+      - package: SimpleLiveKit
+        product: SimpleLiveKit
+    settings:
+      base:
+        PRODUCT_NAME: SwiftPeek
+        PRODUCT_BUNDLE_IDENTIFIER: com.simplelive.app
+        MARKETING_VERSION: "0.5.0"
+        CURRENT_PROJECT_VERSION: "13"
+        SWIFT_VERSION: "5.0"
+        # 同时支持 iPhone 与 iPad：iPhone Duo 内屏是 regular/regular，
+        # 按 Apple 指引必须靠 size class 适配，不能锁死 idiom
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: YES
+        # B 白瓷玻璃图标（不透明 1024 母版，由 Xcode 派生各尺寸）
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # 开发者在 Xcode 中选择自己的团队，或通过 xcodebuild DEVELOPMENT_TEAM=... 传入。
+        CODE_SIGN_STYLE: Automatic
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+    info:
+      path: App/Support/Info.plist
+      properties:
+        CFBundleDisplayName: SwiftPeek
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: SwiftPeek 关注
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Owner
+            LSItemContentTypes:
+              - com.simplelive.follows
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: com.simplelive.follows
+            UTTypeDescription: SwiftPeek 关注
+            UTTypeConformsTo:
+              - public.json
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - simplelivefollows
+              public.mime-type: application/vnd.simplelive.follows+json
+        LSSupportsOpeningDocumentsInPlace: true
+        # 界面文案是中文，必须声明中文本地化，
+        # 否则 EditButton、相对时间等系统串会回落成英文
+        CFBundleDevelopmentRegion: zh-Hans
+        CFBundleLocalizations:
+          - zh-Hans
+          - en
+        UILaunchScreen: {}
+        UIUserInterfaceStyle: Automatic
+        UIBackgroundModes:
+          - audio
+        # 直播流走 HTTPS，但部分房间封面/头像 CDN 仍是 HTTP
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        CFBundleURLTypes:
+          - CFBundleURLName: com.simplelive.app.deeplink
+            CFBundleURLSchemes:
+              - simplelive
+              - douyu
+        # 全方向支持：Duo 内屏不遵守 supportedInterfaceOrientations，
+        # 且横屏支架姿态是 Duo 的常见用法
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight

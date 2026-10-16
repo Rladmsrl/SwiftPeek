@@ -1,0 +1,86 @@
+name: SimpleLiveMac
+options:
+  deploymentTarget:
+    macOS: '27.0'
+  createIntermediateGroups: true
+packages:
+  SimpleLiveKit:
+    path: ../ios_native/SimpleLiveKit
+targets:
+  SimpleLiveMac:
+    type: application
+    platform: macOS
+    sources:
+      - path: App
+      - path: ../THIRD_PARTY_NOTICES.md
+        buildPhase: resources
+      - path: ../LICENSE
+        buildPhase: resources
+      - path: ../shared/Branding.xcassets
+      - path: ../ios_native/App/Player
+      - path: ../ios_native/App/Support/Stores.swift
+      - path: ../ios_native/App/Support/AppSettings.swift
+      - path: ../ios_native/App/Support/Library.swift
+      - path: ../ios_native/App/Support/FollowTransferController.swift
+      - path: ../ios_native/App/Views/FollowTransferView.swift
+      - path: ../ios_native/App/Support/Theme.swift
+      - path: ../ios_native/App/Views/Components.swift
+    dependencies:
+      - package: SimpleLiveKit
+    settings:
+      base:
+        PRODUCT_NAME: SwiftPeek
+        PRODUCT_BUNDLE_IDENTIFIER: com.simplelive.mac
+        MARKETING_VERSION: '0.5.0'
+        CURRENT_PROJECT_VERSION: '13'
+        SWIFT_VERSION: '5.0'
+        CODE_SIGN_IDENTITY: '-'
+        ENABLE_HARDENED_RUNTIME: YES
+        GENERATE_INFOPLIST_FILE: YES
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: SwiftPeek
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: SwiftPeek 关注
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Owner
+            LSItemContentTypes:
+              - com.simplelive.follows
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: com.simplelive.follows
+            UTTypeDescription: SwiftPeek 关注
+            UTTypeConformsTo:
+              - public.json
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - simplelivefollows
+              public.mime-type: application/vnd.simplelive.follows+json
+        CFBundleIconFile: AppIcon
+        CFBundleDevelopmentRegion: zh-Hans
+        CFBundleLocalizations: [zh-Hans, en]
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        CFBundleURLTypes:
+          - CFBundleURLName: com.simplelive.mac.room
+            CFBundleURLSchemes: [simplelive, douyu]
+  SimpleLiveMacTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [Tests]
+    dependencies:
+      - target: SimpleLiveMac
+    settings:
+      base:
+        SWIFT_VERSION: '5.0'
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_IDENTITY: '-'
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/SwiftPeek.app/Contents/MacOS/SwiftPeek
+        BUNDLE_LOADER: $(TEST_HOST)
+schemes:
+  SimpleLiveMac:
+    build:
+      targets:
+        SimpleLiveMac: all
+    test:
+      targets: [SimpleLiveMacTests]

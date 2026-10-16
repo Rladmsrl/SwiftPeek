@@ -1,0 +1,5 @@
+SimpleLiveMac.xcodeproj/
+build/
+*.xcuserstate
+xcuserdata/
+.DS_Store

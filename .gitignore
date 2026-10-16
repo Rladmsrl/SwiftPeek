@@ -1,0 +1,46 @@
+# OS / editor state
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Generated projects and build output
+.build/
+.swiftpm/
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcarchive/
+*.ipa
+*.dSYM/
+
+# Local identities, signing material and credentials
+.env
+.env.*
+!.env.example
+*.p12
+*.p8
+*.pem
+*.key
+*.mobileprovision
+*.provisionprofile
+*.jks
+*.keystore
+*.keychain*
+*.xcconfig.local
+
+# Personal runtime data and transferred follow snapshots
+*.log
+*.jsonl
+*.sqlite
+*.sqlite3
+*.db
+*.simplelivefollows
+follows.json
+history.json
+.local/
+backups/
+
+# Protocol captures retained only in the private development archive
+reference/simple_live_core/demo/*.bin
