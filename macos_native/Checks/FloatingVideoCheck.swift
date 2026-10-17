@@ -34,5 +34,17 @@ struct FloatingVideoCheck {
         precondition(FloatingVideoGeometry.aspect(for: nil) == 16.0 / 9)
         precondition(FloatingVideoGeometry.aspect(for: .zero) == 16.0 / 9)
         print("PASS: landscape/portrait/Retina dimensions preserve aspect ratio in points")
+        let original = CGRect(x: 100, y: 200, width: 400, height: 225)
+        let minimum = CGSize(width: 240, height: 135)
+        let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        for delta in [CGSize(width: 100, height: 0), CGSize(width: 0, height: -100),
+                      CGSize(width: -2000, height: 2000), CGSize(width: 9000, height: -9000)] {
+            let result = FloatingVideoGeometry.resizedFrame(initial: original, delta: delta, minSize: minimum, visible: screen)
+            precondition(result.minX == original.minX && result.maxY == original.maxY)
+            precondition(abs(result.width / result.height - 16.0 / 9) < 0.00001)
+            precondition(result.width >= 240 && result.height >= 135)
+            precondition(result.maxX <= screen.maxX && result.minY >= screen.minY)
+        }
+        print("PASS: corner resizing preserves aspect, top-left anchor, minimum size and screen bounds")
     }
 }

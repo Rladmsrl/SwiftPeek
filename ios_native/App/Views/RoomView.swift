@@ -17,6 +17,7 @@ struct RoomView: View {
     @State private var wantsFullscreen = false
     @State private var isLocked = false
     @State private var controlsVisible = true
+    @State private var showingDanmakuSettings = false
     @State private var hud: PlayerHUD?
     @State private var controlsHideTask: Task<Void, Never>?
 
@@ -141,6 +142,7 @@ struct RoomView: View {
             pip.detach()
         }
         .onChange(of: settings.data.autoPictureInPicture) { configurePiP() }
+        .onChange(of: store.isDanmakuVisible) { pip.refreshDanmaku() }
         .onChange(of: settings.data.backgroundAudio) { _, enabled in playback.setBackgroundAudio(enabled) }
         .onChange(of: player.state) { pip.invalidatePlaybackState() }
         .onChange(of: playback.isWorking) { pip.invalidatePlaybackState() }
@@ -432,47 +434,44 @@ struct RoomView: View {
     /// 在滚动和交互时表现为一体而不是各自独立的一块块玻璃。
     private var controlBar: some View {
         GlassEffectContainer(spacing: 8) {
-            HStack(spacing: 8) {
-                danmakuToggleButton
-                muteButton
-                qualityMenu
-                lineButton
-
-                Spacer(minLength: 0)
-
-                resolutionBadge
-
-                pipButton
-
-                Button {
-                    enterFullscreen()
-                } label: {
-                    Image(systemName: "arrow.up.left.and.arrow.down.right")
-                        .font(.system(size: 13))
-                }
-                .buttonBorderShape(.circle)
-                .accessibilityLabel("全屏")
+            ViewThatFits(in: .horizontal) {
+                inlineControlRow(expanded: true)
+                inlineControlRow(expanded: false)
             }
-            .buttonStyle(.glass)
-            .controlSize(.small)
         }
         // 控制条属于前景交互元素，必须留在安全区内（Duo 上安全区是非对称的）
         .padding(.horizontal, 12)
         .padding(.bottom, 10)
     }
 
+    private func inlineControlRow(expanded: Bool) -> some View {
+        HStack(spacing: 8) {
+            danmakuToggleButton
+            muteButton
+            qualityMenu
+            if expanded { lineButton }
+            Spacer(minLength: 0)
+            if expanded { resolutionBadge.fixedSize() }
+            pipButton
+            Button { enterFullscreen() } label: {
+                Image(systemName: "arrow.up.left.and.arrow.down.right").font(.system(size: 13))
+            }
+            .buttonBorderShape(.circle)
+            .accessibilityLabel("全屏")
+        }
+        .buttonStyle(.glass)
+        .controlSize(.small)
+    }
+
     // MARK: - 控制条零件（全屏与非全屏共用）
 
     private var danmakuToggleButton: some View {
-        Button {
-            store.isDanmakuVisible.toggle()
-            resetControlsTimer()
-        } label: {
-            Image(systemName: store.isDanmakuVisible ? "text.bubble.fill" : "text.bubble")
-                .font(.system(size: 13))
-        }
-        .buttonBorderShape(.circle)
-        .accessibilityLabel(store.isDanmakuVisible ? "隐藏弹幕" : "显示弹幕")
+        PlayerDanmakuControl(isVisible: Binding(get: { store.isDanmakuVisible }, set: { store.isDanmakuVisible = $0 }),
+                             onPresentationChange: { shown in
+                                 showingDanmakuSettings = shown
+                                 if shown { controlsHideTask?.cancel(); controlsVisible = true }
+                                 else { resetControlsTimer() }
+                             }, onToggle: resetControlsTimer)
     }
 
     private var muteButton: some View {
@@ -501,6 +500,13 @@ struct RoomView: View {
                         } else {
                             Text(quality.quality)
                         }
+                    }
+                }
+                if store.lineCount > 1 {
+                    Divider()
+                    Button("切换线路（当前线路 \(store.currentLineIndex + 1)）") {
+                        playback.switchLine()
+                        resetControlsTimer()
                     }
                 }
             } label: {
@@ -709,7 +715,13 @@ struct RoomView: View {
     // MARK: - 画中画
 
     private func configurePiP() {
-        pip.attach(player: player, automatic: settings.data.autoPictureInPicture)
+        pip.attach(player: player, automatic: settings.data.autoPictureInPicture, settings: settings)
+        pip.danmakuSnapshot = { [weak playback, weak settings] in
+            guard let store = playback?.store, let settings else { return PiPDanmakuSnapshot() }
+            return PiPDanmakuSnapshot(messages: store.messages, settings: settings.danmakuSettings,
+                                      isVisible: settings.data.pictureInPictureDanmaku && store.isDanmakuVisible,
+                                      sourceID: store.roomID)
+        }
         pip.onRequestPlay = { playback.play() }
         pip.onRequestPause = { playback.stopPlayback() }
         pip.isPlaybackRequested = { playback.playbackRequested }
@@ -722,7 +734,7 @@ struct RoomView: View {
     /// 控制条 4 秒无操作自动隐藏；任何一次交互都把计时重置
     private func resetControlsTimer() {
         controlsHideTask?.cancel()
-        guard isFullscreen else { return }
+        guard isFullscreen, !showingDanmakuSettings else { return }
         #if DEBUG
         // 截图校验时关掉自动隐藏，否则控制条是否出现取决于抓图时机
         if UserDefaults.standard.bool(forKey: "keepControls") { return }

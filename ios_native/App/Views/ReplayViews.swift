@@ -144,6 +144,7 @@ struct ReplayView: View {
     @State private var progress = ReplayProgressStore.shared
     @State private var panel: ReplayPanel = .danmaku
     @State private var controlsVisible = true
+    @State private var showingDanmakuSettings = false
     @State private var hideTask: Task<Void, Never>?
     @State private var wantsFullscreen = false
     @State private var hud: PlayerHUD?
@@ -236,6 +237,7 @@ struct ReplayView: View {
         .onChange(of: player.isPlaying) { _, playing in
             if playing { scheduleHide() } else { controlsVisible = true }
         }
+        .onChange(of: settings.data.autoPictureInPicture) { player.preparePiP(automatic: settings.data.autoPictureInPicture) }
     }
 
     private func start() {
@@ -408,11 +410,12 @@ struct ReplayView: View {
     private var topButtons: some View {
         GlassEffectContainer(spacing: 8) {
             HStack(spacing: 8) {
-                Button { session.isDanmakuVisible.toggle(); scheduleHide() } label: {
-                    Image(systemName: session.isDanmakuVisible ? "text.bubble.fill" : "text.bubble").font(.system(size: 13))
-                }
-                .buttonBorderShape(.circle)
-                .accessibilityLabel(session.isDanmakuVisible ? "隐藏弹幕" : "显示弹幕")
+                PlayerDanmakuControl(isVisible: Binding(get: { session.isDanmakuVisible }, set: { session.isDanmakuVisible = $0 }),
+                                     onPresentationChange: { shown in
+                                         showingDanmakuSettings = shown
+                                         if shown { hideTask?.cancel(); controlsVisible = true }
+                                         else { scheduleHide() }
+                                     }, onToggle: scheduleHide)
                 Menu {
                     Section("播放速度") {
                         ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { value in
@@ -659,6 +662,7 @@ struct ReplayView: View {
     private func scheduleHide() {
         hideTask?.cancel()
         controlsVisible = true
+        guard !showingDanmakuSettings else { return }
         hideTask = Task {
             try? await Task.sleep(for: .seconds(3))
             guard !Task.isCancelled, player.isPlaying else { return }

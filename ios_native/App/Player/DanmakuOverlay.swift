@@ -15,6 +15,7 @@ typealias DanmakuPlatformView = UIView
 
 /// 弹幕渲染设置
 struct DanmakuSettings: Equatable {
+    var font: DanmakuFont = .system
     var fontSize: CGFloat = 16
     var opacity: CGFloat = 1.0
     /// 弹幕占据画面高度比例
@@ -62,12 +63,16 @@ final class DanmakuHostView: DanmakuPlatformView {
     /// 字号、区域、速度变了要立刻重算轨道。只等下一次 layout 的话，
     /// 从设置页返回时 bounds 没变，飞幕仍按旧行数排，会重叠。
     func apply(_ newSettings: DanmakuSettings) {
-        let layoutChanged = settings.fontSize != newSettings.fontSize
+        let layoutChanged = settings.font != newSettings.font
+            || settings.fontSize != newSettings.fontSize
             || settings.areaRatio != newSettings.areaRatio
             || settings.speed != newSettings.speed
             || settings.gap != newSettings.gap
         settings = newSettings
-        guard layoutChanged else { return }
+        guard layoutChanged else {
+            drawingLayer.sublayers?.forEach { $0.opacity = Float(settings.opacity) }
+            return
+        }
         trackCount = 0
         recalculateTracks()
     }
@@ -126,8 +131,7 @@ final class DanmakuHostView: DanmakuPlatformView {
             return  // 所有轨道都忙，丢弃而不是叠字
         }
 
-        let font = PlatformFont.systemFont(ofSize: settings.fontSize, weight: .medium)
-        let coreFont = CTFontCreateWithName(font.fontName as CFString, font.pointSize, nil)
+        let coreFont = settings.font.makeFont(size: settings.fontSize)
         guard let raster = DanmakuTextRasterizer.render(
             text: text, font: coreFont, color: color.cgColor,
             strokeWidth: settings.strokeWidth, scale: displayScale

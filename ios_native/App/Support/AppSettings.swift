@@ -76,6 +76,8 @@ struct SettingsData: Codable, Equatable {
     var backgroundAudio: Bool = true
     /// 切到桌面时自动进入画中画小窗
     var autoPictureInPicture: Bool = true
+    var pictureInPictureDanmaku: Bool = false
+    var floatingWindowOnTop: Bool = true
     var showResolutionBadge: Bool = true
     /// 播放器音量，退出直播间时记住
     var playerVolume: Double = 1.0
@@ -85,6 +87,7 @@ struct SettingsData: Codable, Equatable {
 
     // 弹幕
     var danmakuVisibleByDefault: Bool = true
+    var danmakuFont: DanmakuFont = .system
     var danmakuFontSize: Double = 16
     var danmakuOpacity: Double = 1.0
     var danmakuAreaRatio: Double = 0.5
@@ -110,10 +113,13 @@ struct SettingsData: Codable, Equatable {
         autoPlay = v(.autoPlay, base.autoPlay)
         backgroundAudio = v(.backgroundAudio, base.backgroundAudio)
         autoPictureInPicture = v(.autoPictureInPicture, base.autoPictureInPicture)
+        pictureInPictureDanmaku = v(.pictureInPictureDanmaku, base.pictureInPictureDanmaku)
+        floatingWindowOnTop = v(.floatingWindowOnTop, base.floatingWindowOnTop)
         showResolutionBadge = v(.showResolutionBadge, base.showResolutionBadge)
         playerVolume = v(.playerVolume, base.playerVolume)
         showHotBadge = v(.showHotBadge, base.showHotBadge)
         danmakuVisibleByDefault = v(.danmakuVisibleByDefault, base.danmakuVisibleByDefault)
+        danmakuFont = v(.danmakuFont, base.danmakuFont)
         danmakuFontSize = v(.danmakuFontSize, base.danmakuFontSize)
         danmakuOpacity = v(.danmakuOpacity, base.danmakuOpacity)
         danmakuAreaRatio = v(.danmakuAreaRatio, base.danmakuAreaRatio)
@@ -162,6 +168,7 @@ final class AppSettings {
     /// 供弹幕渲染层使用的配置
     var danmakuSettings: DanmakuSettings {
         DanmakuSettings(
+            font: data.danmakuFont,
             fontSize: data.danmakuFontSize,
             opacity: data.danmakuOpacity,
             areaRatio: data.danmakuAreaRatio,

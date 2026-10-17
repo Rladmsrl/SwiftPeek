@@ -7,7 +7,7 @@ import SwiftUI
 /// 录像播放器。
 ///
 /// 录像是标准 HLS（H.264 / AAC），交给系统 AVPlayer 即可：拖动、倍速、
-/// 缓冲和画中画都由系统完成，不需要直播那套自研 FLV 链路。
+/// 缓冲由系统完成；Mac 小窗承载原图层，iOS 可选合成弹幕画中画。
 @MainActor
 @Observable
 final class ReplayPlayer {
@@ -25,6 +25,7 @@ final class ReplayPlayer {
     private(set) var bufferedTime: TimeInterval = 0
     private(set) var videoSize: CGSize?
     private(set) var isPiPActive = false
+    var onPiPRestore: (() -> Void)?
 
     var rate: Float = 1 {
         didSet {
@@ -40,6 +41,8 @@ final class ReplayPlayer {
     var onEnded: (() -> Void)?
     /// 每 0.25 秒回报一次播放进度（拖动期间不回报）
     var onTick: ((TimeInterval) -> Void)?
+    /// Includes seeks initiated by the system PiP controls.
+    var onSeek: ((TimeInterval) -> Void)?
 
     /// 等待中的起播位置与是否自动播放，item 就绪后执行
     private var pendingStart: TimeInterval = 0
@@ -51,6 +54,16 @@ final class ReplayPlayer {
     private var notificationTokens: [any NSObjectProtocol] = []
     private var pip: AVPictureInPictureController?
     private var pipDelegate: ReplayPiPDelegate?
+    var danmakuSnapshot: (() -> PiPDanmakuSnapshot)?
+    private var pipSettings: AppSettings?
+    #if os(macOS)
+    private let floating = MacFloatingVideoController()
+    private(set) var isInFloatingWindow = false
+    #else
+    private let composite = PiPCompositeSource()
+    private let preference = PiPDanmakuPreference()
+    private var videoOutput: AVPlayerItemVideoOutput?
+    #endif
     private var isShutDown = false
 
     init() {
@@ -89,6 +102,9 @@ final class ReplayPlayer {
         let item = AVPlayerItem(asset: asset)
         observe(item)
         player.replaceCurrentItem(with: item)
+        #if os(iOS)
+        if isPiPActive { refreshPiPDanmaku() }
+        #endif
     }
 
     private func observe(_ item: AVPlayerItem) {
@@ -177,6 +193,7 @@ final class ReplayPlayer {
         let clamped = min(max(0, target), upper)
         seekTarget = clamped
         currentTime = clamped
+        onSeek?(clamped)
         if state == .loading {
             // 还没就绪：改写起播位置，就绪后一次到位
             pendingStart = clamped
@@ -223,6 +240,10 @@ final class ReplayPlayer {
     }
 
     private func clearItem() {
+        #if os(iOS)
+        if let videoOutput { player.currentItem?.remove(videoOutput) }
+        videoOutput = nil
+        #endif
         itemObservations.removeAll()
         notificationTokens.forEach { NotificationCenter.default.removeObserver($0) }
         notificationTokens.removeAll()
@@ -236,6 +257,13 @@ final class ReplayPlayer {
         isShutDown = true
         pip?.stopPictureInPicture()
         pip = nil
+        #if os(macOS)
+        floating.stop()
+        #else
+        stopComposite()
+        preference.stop()
+        #endif
+        danmakuSnapshot = nil
         state = .idle
         clearItem()
         playerObservations.removeAll()
@@ -265,27 +293,104 @@ final class ReplayPlayer {
 
     // MARK: 画中画
 
-    static var isPiPSupported: Bool { AVPictureInPictureController.isPictureInPictureSupported() }
+    static var isPiPSupported: Bool {
+        #if os(macOS)
+        true
+        #else
+        AVPictureInPictureController.isPictureInPictureSupported()
+        #endif
+    }
+
+    func configurePiP(settings: AppSettings) {
+        pipSettings = settings
+        #if os(iOS)
+        preference.watch(settings) { [weak self] in self?.refreshPiPDanmaku() }
+        #endif
+    }
 
     /// 图层挂进视图树后才能创建画中画控制器
     func preparePiP(automatic: Bool) {
+        #if os(iOS)
         guard Self.isPiPSupported, playerLayer.superlayer != nil else { return }
         if pip == nil, let controller = AVPictureInPictureController(playerLayer: playerLayer) {
-            let delegate = ReplayPiPDelegate { [weak self] active in self?.isPiPActive = active }
+            let delegate = ReplayPiPDelegate { [weak self] active in
+                guard let self else { return }
+                self.isPiPActive = active
+                if active { self.refreshPiPDanmaku() }
+                else {
+                    self.pip?.contentSource = AVPictureInPictureController.ContentSource(playerLayer: self.playerLayer)
+                    self.stopComposite()
+                }
+            }
+            delegate.player = self
+            delegate.onWillStart = { [weak self] in self?.isPiPActive = true }
             controller.delegate = delegate
             pip = controller
             pipDelegate = delegate
         }
-        #if os(iOS)
         pip?.canStartPictureInPictureAutomaticallyFromInline = automatic
         #endif
     }
 
     func togglePiP() {
-        preparePiP(automatic: false)
+        #if os(macOS)
+        if floating.isActive { floating.stop(); return }
+        guard let settings = pipSettings, playerLayer.superlayer != nil else { return }
+        isInFloatingWindow = true
+        floating.onStateChange = { [weak self] in self?.isPiPActive = $0 }
+        floating.onFinish = { [weak self] in self?.isInFloatingWindow = false }
+        floating.onRestore = { [weak self] in self?.onPiPRestore?() }
+        floating.start(layer: playerLayer, size: videoSize, settings: settings,
+                       isPlaying: { [weak self] in self?.isPlaying == true },
+                       togglePlayback: { [weak self] in self?.togglePlay() },
+                       snapshot: { [weak self] in self?.danmakuSnapshot?() ?? PiPDanmakuSnapshot() })
+        #else
+        preparePiP(automatic: pipSettings?.data.autoPictureInPicture ?? false)
         guard let pip else { return }
         if pip.isPictureInPictureActive { pip.stopPictureInPicture() } else { pip.startPictureInPicture() }
+        #endif
     }
+
+    #if os(iOS)
+    func refreshPiPDanmaku() {
+        guard isPiPActive, let pip else { return }
+        guard pipSettings?.data.pictureInPictureDanmaku == true, let item = player.currentItem else {
+            pip.contentSource = AVPictureInPictureController.ContentSource(playerLayer: playerLayer)
+            stopComposite()
+            return
+        }
+        if videoOutput == nil {
+            let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferMetalCompatibilityKey as String: true,
+            ])
+            item.add(output)
+            videoOutput = output
+        }
+        composite.snapshot = { [weak self] in self?.danmakuSnapshot?() ?? PiPDanmakuSnapshot() }
+        composite.frame = { [weak self] in
+            guard let self else { return nil }
+            return self.videoOutput?.copyPixelBuffer(forItemTime: self.player.currentTime(), itemTimeForDisplay: nil)
+        }
+        composite.parent = { [weak self] in self?.playerLayer.superlayer }
+        composite.playbackTime = { [weak self] in
+            guard let self else { return (.zero, 0) }
+            return (self.player.currentTime(), self.player.rate)
+        }
+        composite.onReady = { [weak self] in
+            guard let self, let delegate = self.pipDelegate, self.isPiPActive else { return }
+            self.pip?.contentSource = AVPictureInPictureController.ContentSource(
+                sampleBufferDisplayLayer: self.composite.layer, playbackDelegate: delegate)
+        }
+        composite.start()
+    }
+
+    private func stopComposite() {
+        composite.stop()
+        if let videoOutput { player.currentItem?.remove(videoOutput) }
+        videoOutput = nil
+    }
+    #endif
 
     private static func time(_ seconds: TimeInterval) -> CMTime {
         CMTime(seconds: seconds, preferredTimescale: 600)
@@ -300,8 +405,14 @@ final class ReplayPlayer {
 }
 
 private final class ReplayPiPDelegate: NSObject, AVPictureInPictureControllerDelegate {
+    weak var player: ReplayPlayer?
+    var onWillStart: (@MainActor () -> Void)?
     let onChange: @MainActor (Bool) -> Void
     init(onChange: @escaping @MainActor (Bool) -> Void) { self.onChange = onChange }
+
+    func pictureInPictureControllerWillStartPictureInPicture(_ controller: AVPictureInPictureController) {
+        MainActor.assumeIsolated { onWillStart?() }
+    }
 
     func pictureInPictureControllerDidStartPictureInPicture(_ controller: AVPictureInPictureController) {
         Task { @MainActor in onChange(true) }
@@ -309,7 +420,37 @@ private final class ReplayPiPDelegate: NSObject, AVPictureInPictureControllerDel
     func pictureInPictureControllerDidStopPictureInPicture(_ controller: AVPictureInPictureController) {
         Task { @MainActor in onChange(false) }
     }
+    func pictureInPictureController(_ controller: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error) {
+        Task { @MainActor in onChange(false) }
+    }
+    func pictureInPictureController(_ controller: AVPictureInPictureController,
+                                   restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void) {
+        completionHandler(true)
+    }
 }
+
+#if os(iOS)
+extension ReplayPiPDelegate: AVPictureInPictureSampleBufferPlaybackDelegate {
+    func pictureInPictureController(_ controller: AVPictureInPictureController, setPlaying playing: Bool) {
+        MainActor.assumeIsolated {
+            if playing { player?.play() } else { player?.pause() }
+            controller.invalidatePlaybackState()
+        }
+    }
+    func pictureInPictureControllerTimeRangeForPlayback(_ controller: AVPictureInPictureController) -> CMTimeRange {
+        MainActor.assumeIsolated {
+            CMTimeRange(start: .zero, duration: CMTime(seconds: player?.duration ?? 0, preferredTimescale: 600))
+        }
+    }
+    func pictureInPictureControllerIsPlaybackPaused(_ controller: AVPictureInPictureController) -> Bool {
+        MainActor.assumeIsolated { player?.isPlaying != true }
+    }
+    func pictureInPictureController(_ controller: AVPictureInPictureController, didTransitionToRenderSize newRenderSize: CMVideoDimensions) {}
+    func pictureInPictureController(_ controller: AVPictureInPictureController, skipByInterval interval: CMTime) async {
+        await MainActor.run { player?.skip(by: interval.seconds) }
+    }
+}
+#endif
 
 // MARK: - SwiftUI 桥接
 
@@ -351,12 +492,13 @@ struct ReplayVideoView: NSViewRepresentable {
         let view = HostView()
         view.wantsLayer = true
         view.layer?.backgroundColor = NSColor.black.cgColor
-        view.layer?.addSublayer(player.playerLayer)
+        if !player.isInFloatingWindow { view.layer?.addSublayer(player.playerLayer) }
         view.onAttach = onAttach
         return view
     }
 
     func updateNSView(_ nsView: HostView, context: Context) {
+        guard !player.isInFloatingWindow else { return }
         if player.playerLayer.superlayer !== nsView.layer { nsView.layer?.addSublayer(player.playerLayer) }
     }
 

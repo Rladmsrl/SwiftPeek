@@ -92,6 +92,10 @@ final class FLVLivePlayer {
 
     /// 可从任意线程 enqueue，我们的解复用循环是串行的
     let displayLayer = AVSampleBufferDisplayLayer()
+    #if os(iOS)
+    @ObservationIgnored let pipFrames = PiPLiveFrameSource()
+    func pictureInPictureFrame() -> CVPixelBuffer? { pipFrames.frame(at: synchronizer.currentTime()) }
+    #endif
     let audioRenderer = AVSampleBufferAudioRenderer()
     private let synchronizer = AVSampleBufferRenderSynchronizer()
 
@@ -1080,6 +1084,9 @@ final class FLVLivePlayer {
             return true
         } ?? false
         if enqueued {
+            #if os(iOS)
+            pipFrames.append(sample)
+            #endif
             context.lastQueuedEnd = CMTimeMaximum(context.lastQueuedEnd,
                 CMTimeAdd(CMSampleBufferGetPresentationTimeStamp(sample), CMTime(seconds: 1.0 / 60, preferredTimescale: 60000)))
             if context.continuous && context.clockNeedsResume {

@@ -161,6 +161,7 @@ final class ReplaySession {
     init(service: DouyuReplayService = DouyuReplayService()) {
         self.service = service
         player.onTick = { [weak self] time in self?.tick(time) }
+        player.onSeek = { [weak self] time in self?.feed?.reset(at: time) }
         player.onFailure = { [weak self] message in self?.recover(message) }
         player.onEnded = { [weak self] in self?.playbackEnded() }
     }
@@ -168,6 +169,14 @@ final class ReplaySession {
     func configure(settings: AppSettings) {
         guard self.settings == nil else { return }
         self.settings = settings
+        player.configurePiP(settings: settings)
+        player.danmakuSnapshot = { [weak self, weak settings] in
+            guard let self, let settings else { return PiPDanmakuSnapshot() }
+            return PiPDanmakuSnapshot(messages: self.feed?.messages ?? [], settings: settings.danmakuSettings,
+                                      isVisible: settings.data.pictureInPictureDanmaku && self.isDanmakuVisible,
+                                      isPaused: !self.player.isPlaying, clearToken: self.feed?.clearToken ?? 0,
+                                      sourceID: self.hashID ?? "")
+        }
         player.volume = settings.data.playerVolume
         isDanmakuVisible = settings.data.danmakuVisibleByDefault
     }
@@ -277,7 +286,6 @@ final class ReplaySession {
 
     func seek(to time: TimeInterval) {
         player.seek(to: time)
-        feed?.reset(at: player.displayTime)
     }
 
     func skip(by delta: TimeInterval) {

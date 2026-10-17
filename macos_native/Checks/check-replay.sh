@@ -10,6 +10,10 @@ xcrun swiftc -swift-version 5 -target "$(uname -m)-apple-macos27.0" \
   -I "$products_dir" "$products_dir/SimpleLiveKit.o" \
   "$repo_dir/ios_native/App/Player/ReplayDanmakuFeed.swift" \
   "$repo_dir/ios_native/App/Player/ReplayPlayer.swift" \
+  "$repo_dir/ios_native/App/Player/MacFloatingVideo.swift" \
+  "$repo_dir/ios_native/App/Player/FloatingVideoGeometry.swift" \
+  "$repo_dir/ios_native/App/Player/VideoLayerLayout.swift" \
+  "$repo_dir/ios_native/App/Player/PiPDanmaku.swift" \
   "$repo_dir/ios_native/App/Support/ReplayStores.swift" \
   "$repo_dir/ios_native/App/Support/AppSettings.swift" \
   "$repo_dir/ios_native/App/Support/Theme.swift" \

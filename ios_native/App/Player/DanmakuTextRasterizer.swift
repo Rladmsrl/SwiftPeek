@@ -1,6 +1,39 @@
 import CoreGraphics
 import CoreText
 import Foundation
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
+
+enum DanmakuFont: String, CaseIterable, Identifiable, Codable {
+    case system, rounded, serif
+
+    var id: Self { self }
+    var label: String {
+        switch self {
+        case .system: "标准"
+        case .rounded: "圆体"
+        case .serif: "衬线"
+        }
+    }
+
+    func makeFont(size: CGFloat) -> CTFont {
+        #if os(macOS)
+        let base = NSFont.systemFont(ofSize: size, weight: .medium)
+        let design: NSFontDescriptor.SystemDesign = self == .rounded ? .rounded : self == .serif ? .serif : .default
+        let descriptor = base.fontDescriptor.withDesign(design) ?? base.fontDescriptor
+        let font = NSFont(descriptor: descriptor, size: size) ?? base
+        #else
+        let base = UIFont.systemFont(ofSize: size, weight: .medium)
+        let design: UIFontDescriptor.SystemDesign = self == .rounded ? .rounded : self == .serif ? .serif : .default
+        let descriptor = base.fontDescriptor.withDesign(design) ?? base.fontDescriptor
+        let font = UIFont(descriptor: descriptor, size: size)
+        #endif
+        return font as CTFont
+    }
+}
 
 /// Render each message once, then move its image with Core Animation. Core Text
 /// uses explicit CGColor attributes; the outline is drawn BEFORE the solid fill.

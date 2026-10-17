@@ -16,6 +16,9 @@ final class PiPController: NSObject {
     private(set) var isActive = false
     private var controller: AVPictureInPictureController?
     private weak var player: FLVLivePlayer?
+    var danmakuSnapshot: (() -> PiPDanmakuSnapshot)?
+    private let composite = PiPCompositeSource()
+    private let preference = PiPDanmakuPreference()
 
     /// PiP 小窗点了播放时回调。直播没有缓冲区可续播，只能重新拉流。
     var onRequestPlay: (() -> Void)?
@@ -28,10 +31,36 @@ final class PiPController: NSObject {
 
     func invalidatePlaybackState() { controller?.invalidatePlaybackState() }
 
+    func refreshDanmaku() {
+        guard isActive, let player, let controller else { return }
+        if danmakuSnapshot?().isVisible == true {
+            player.pipFrames.setEnabled(true)
+            composite.snapshot = { [weak self] in self?.danmakuSnapshot?() ?? PiPDanmakuSnapshot() }
+            composite.frame = { [weak player] in player?.pictureInPictureFrame() }
+            composite.parent = { [weak player] in player?.displayLayer.superlayer }
+            composite.onReady = { [weak self] in
+                guard let self, let controller = self.controller, self.isActive else { return }
+                controller.contentSource = AVPictureInPictureController.ContentSource(
+                    sampleBufferDisplayLayer: self.composite.layer, playbackDelegate: self)
+            }
+            composite.start()
+        } else {
+            controller.contentSource = AVPictureInPictureController.ContentSource(
+                sampleBufferDisplayLayer: player.displayLayer, playbackDelegate: self)
+            stopComposite()
+        }
+    }
+
+    private func stopComposite() {
+        composite.stop()
+        player?.pipFrames.setEnabled(false)
+    }
+
     /// 绑定播放器图层。重复调用只更新自动启动开关。
-    func attach(player: FLVLivePlayer, automatic: Bool) {
+    func attach(player: FLVLivePlayer, automatic: Bool, settings: AppSettings) {
         guard Self.isSupported else { return }
         self.player = player
+        preference.watch(settings) { [weak self] in self?.refreshDanmaku() }
 
         if controller == nil {
             let source = AVPictureInPictureController.ContentSource(
@@ -65,6 +94,8 @@ final class PiPController: NSObject {
     /// 离开房间时断开，避免小窗指向一个已经停掉的图层
     func detach() {
         stop()
+        stopComposite()
+        preference.stop()
         controller?.delegate = nil
         controller = nil
         player = nil
@@ -73,6 +104,7 @@ final class PiPController: NSObject {
         onRequestPause = nil
         isPlaybackRequested = nil
         onStateChange = nil
+        danmakuSnapshot = nil
     }
 }
 
@@ -151,6 +183,7 @@ extension PiPController: AVPictureInPictureControllerDelegate {
     ) {
         MainActor.assumeIsolated {
             isActive = true
+            refreshDanmaku()
             onStateChange?(true)
         }
     }
@@ -160,6 +193,11 @@ extension PiPController: AVPictureInPictureControllerDelegate {
     ) {
         MainActor.assumeIsolated {
             isActive = false
+            stopComposite()
+            if let player {
+                controller?.contentSource = AVPictureInPictureController.ContentSource(
+                    sampleBufferDisplayLayer: player.displayLayer, playbackDelegate: self)
+            }
             onStateChange?(false)
         }
     }
@@ -170,6 +208,7 @@ extension PiPController: AVPictureInPictureControllerDelegate {
     ) {
         MainActor.assumeIsolated {
             isActive = false
+            stopComposite()
             onStateChange?(false)
             print("[PiP] 启动失败：\(error.localizedDescription)")
         }

@@ -30,7 +30,13 @@ final class MacRoomSession {
         self.settings = settings
         self.library = library
         player.volume = settings.data.playerVolume
-        pip.attach(player: player, automatic: false)
+        pip.attach(player: player, automatic: false, settings: settings)
+        pip.danmakuSnapshot = { [weak self, weak settings] in
+            guard let self, let settings else { return PiPDanmakuSnapshot() }
+            return PiPDanmakuSnapshot(messages: self.store.messages, settings: settings.danmakuSettings,
+                                      isVisible: settings.data.pictureInPictureDanmaku && self.store.isDanmakuVisible,
+                                      sourceID: self.roomID)
+        }
         pip.onRequestPlay = { [weak self] in self?.play() }
         pip.onRequestPause = { [weak self] in self?.togglePlayback() }
         pip.onStateChange = { [weak self] in self?.pipActive = $0 }
@@ -196,6 +202,7 @@ struct MacRoomView: View {
     @State private var session: MacRoomSession
     @State private var showChat = true
     @State private var controlsVisible = true
+    @State private var showingDanmakuSettings = false
     @State private var followChat = true
     @State private var window: NSWindow?
     @Environment(AppSettings.self) private var settings
@@ -297,7 +304,7 @@ struct MacRoomView: View {
             }
         }
         .overlay(alignment: .bottom) {
-            if controlsVisible || session.player.state != .playing {
+            if controlsVisible || showingDanmakuSettings || session.player.state != .playing {
                 VStack(spacing: 10) {
                     HStack {
                         Spacer()
@@ -398,9 +405,9 @@ struct MacRoomView: View {
                 Button("线路 \(session.store.lineCount == 0 ? 0 : session.store.currentLineIndex + 1)") { session.switchLine() }
                     .font(.system(size: 11, weight: .medium)).disabled(session.store.lineCount < 2 || session.isWorking)
             }
-            Button { session.store.isDanmakuVisible.toggle() } label: {
-                Image(systemName: "text.bubble").foregroundStyle(session.store.isDanmakuVisible ? .white : .white.opacity(0.4))
-            }.help("显示 / 隐藏弹幕")
+            PlayerDanmakuControl(isVisible: Binding(get: { session.store.isDanmakuVisible },
+                                                    set: { session.store.isDanmakuVisible = $0 }),
+                                 onPresentationChange: { showingDanmakuSettings = $0 })
             if PiPController.isSupported {
                 Button { session.pip.toggle() } label: { Image(systemName: session.pipActive ? "pip.exit" : "pip.enter") }
                     .help("画中画").disabled(!session.pipActive && !session.player.isActive)

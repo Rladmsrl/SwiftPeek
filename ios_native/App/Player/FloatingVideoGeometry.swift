@@ -13,4 +13,17 @@ enum FloatingVideoGeometry {
         let width = min(420, available.width * 0.6, available.height * 0.6 * aspect)
         return CGSize(width: width, height: width / aspect)
     }
+
+    /// Bottom-right grip, preserving the opposite (top-left) corner and aspect.
+    static func resizedFrame(initial: CGRect, delta: CGSize, minSize: CGSize, visible: CGRect?) -> CGRect {
+        let aspect = aspect(for: initial.size)
+        let horizontal = delta.width
+        let vertical = -delta.height * aspect
+        let change = abs(horizontal) >= abs(vertical) ? horizontal : vertical
+        let maximum = visible.map { min(max(minSize.width, $0.maxX - initial.minX),
+                                         max(minSize.height, initial.maxY - $0.minY) * aspect) } ?? 4096
+        let width = min(maximum, max(minSize.width, minSize.height * aspect, initial.width + change))
+        let height = width / aspect
+        return CGRect(x: initial.minX, y: initial.maxY - height, width: width, height: height)
+    }
 }

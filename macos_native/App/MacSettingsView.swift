@@ -103,6 +103,11 @@ struct MacSettingsView: View {
                 Text("使用内存缓冲和后台换流减少中断，会增加少量直播延迟。网络长时间中断时仍可能暂停。")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }
+            Section("画中画") {
+                Toggle("小窗始终置顶", isOn: $settings.data.floatingWindowOnTop)
+                Text("拖动画面移动小窗，拖动右下角调整大小。小窗内也可切换置顶和弹幕，直播与录像均适用。弹幕遵循播放器的开关与屏蔽词。")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            }
             Section("窗口与快捷键") {
                 LabeledContent("播放 / 停止", value: "空格")
                 LabeledContent("静音", value: "M")
@@ -119,10 +124,8 @@ struct MacSettingsView: View {
         return Group {
             Section("弹幕显示") {
                 Toggle("默认显示弹幕", isOn: $settings.data.danmakuVisibleByDefault)
-                LabeledContent("字号 · \(Int(settings.data.danmakuFontSize))") {
-                    Slider(value: $settings.data.danmakuFontSize, in: 12...32, step: 1)
-                }
-                LabeledContent("不透明度") { Slider(value: $settings.data.danmakuOpacity, in: 0.2...1) }
+                Text("字体、字号、可见度与画中画弹幕，可在播放页的“弹幕”下拉面板中调整。")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
                 LabeledContent("显示区域") { Slider(value: $settings.data.danmakuAreaRatio, in: 0.2...1) }
                 LabeledContent("滚动速度") { Slider(value: $settings.data.danmakuSpeed, in: 60...240) }
                 Toggle("文字描边", isOn: $settings.data.danmakuStroke)

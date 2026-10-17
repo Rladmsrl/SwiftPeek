@@ -45,20 +45,8 @@ struct SettingsView: View {
             Section("弹幕") {
                 Toggle("默认显示弹幕", isOn: $settings.data.danmakuVisibleByDefault)
 
-                sliderRow(
-                    title: "字号",
-                    value: $settings.data.danmakuFontSize,
-                    range: 11...28,
-                    step: 1,
-                    display: "\(Int(settings.data.danmakuFontSize))"
-                )
-                sliderRow(
-                    title: "不透明度",
-                    value: $settings.data.danmakuOpacity,
-                    range: 0.2...1.0,
-                    step: 0.05,
-                    display: "\(Int(settings.data.danmakuOpacity * 100))%"
-                )
+                Text("字体、字号、可见度与画中画弹幕，可在播放页的“弹幕”下拉面板中调整。")
+                    .font(.caption).foregroundStyle(.secondary)
                 sliderRow(
                     title: "显示区域",
                     value: $settings.data.danmakuAreaRatio,

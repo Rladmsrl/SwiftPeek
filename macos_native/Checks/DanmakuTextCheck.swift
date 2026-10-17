@@ -10,9 +10,12 @@ struct DanmakuTextCheck {
                       CGColor(srgbRed: 1, green: 0, blue: 0, alpha: 1),
                       CGColor(srgbRed: 1, green: 105.0 / 255, blue: 180.0 / 255, alpha: 1)]
         var checked = 0
-        for size: CGFloat in [12, 16, 24, 32] {
-            let platformFont = NSFont.systemFont(ofSize: size, weight: .medium)
-            let font = CTFontCreateWithName(platformFont.fontName as CFString, size, nil)
+        let sizes: [CGFloat] = [12, 16, 24, 32]
+        let configurations: [(DanmakuFont, CGFloat)] = DanmakuFont.allCases.flatMap { style in
+            sizes.map { (style, $0) }
+        }
+        for (style, size) in configurations {
+            let font = style.makeFont(size: size)
             for scale: CGFloat in [1, 2, 3] {
                 for text in samples {
                     for color in colors {

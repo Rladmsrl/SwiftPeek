@@ -93,7 +93,7 @@ See [capture notes](docs/screenshots/README.md).
 | --- | --- | --- |
 | Interface | Tabs, adaptive split layouts, landscape playback | Sidebar, adaptive cards, separate stream windows |
 | Input | Touch gestures, volume and brightness controls | Mouse, keyboard shortcuts, resizable windows |
-| Floating playback | System Picture in Picture | An AppKit floating playback window |
+| Floating playback | System Picture in Picture, optional danmaku | Movable, resizable window with optional pinning and danmaku |
 | Background behavior | Follows background-audio and PiP preferences | Stream windows keep playing while browsing the main window |
 | Follow sharing | System share sheet and file import | System share sheet and file import |
 | Replays | List and player pages, landscape fullscreen gestures | Separate replay windows, keyboard shortcuts |

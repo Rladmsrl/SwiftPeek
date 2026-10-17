@@ -16,6 +16,7 @@ struct MacReplayView: View {
     @State private var panel: ReplayPanel
     @State private var showPanel = true
     @State private var pointerActive = true
+    @State private var showingDanmakuSettings = false
     @State private var hideTask: Task<Void, Never>?
     @State private var followDanmaku = true
     @State private var window: NSWindow?
@@ -55,6 +56,10 @@ struct MacReplayView: View {
         .background(WindowReader { resolved in
             window = resolved
             resolved?.isReleasedWhenClosed = false
+            player.onPiPRestore = { [weak resolved] in
+                resolved?.deminiaturize(nil)
+                resolved?.makeKeyAndOrderFront(nil)
+            }
         })
         .task { start() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { notification in
@@ -135,7 +140,7 @@ struct MacReplayView: View {
 
     // MARK: 播放区
 
-    private var controlsShown: Bool { pointerActive || !player.isPlaying }
+    private var controlsShown: Bool { pointerActive || showingDanmakuSettings || !player.isPlaying }
 
     private var video: some View {
         ZStack {
@@ -318,10 +323,9 @@ struct MacReplayView: View {
                 }
             } label: { Text(session.currentQuality?.name ?? "清晰度").font(.system(size: 11, weight: .medium)) }
                 .menuStyle(.borderlessButton).fixedSize().disabled(session.qualities.isEmpty)
-            Button { session.isDanmakuVisible.toggle() } label: {
-                Image(systemName: session.isDanmakuVisible ? "text.bubble.fill" : "text.bubble")
-                    .foregroundStyle(session.isDanmakuVisible ? .white : .white.opacity(0.4))
-            }.help("显示 / 隐藏弹幕（D）")
+            PlayerDanmakuControl(isVisible: Binding(get: { session.isDanmakuVisible },
+                                                    set: { session.isDanmakuVisible = $0 }),
+                                 onPresentationChange: { showingDanmakuSettings = $0 })
             Button { player.isMuted.toggle() } label: {
                 Image(systemName: player.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill").frame(width: 18)
             }.help("静音（M）")
