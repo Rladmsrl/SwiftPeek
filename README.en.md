@@ -4,13 +4,15 @@
 
 <h1 align="center">SwiftPeek</h1>
 
-<p align="center"><strong>Just live. Natively.</strong></p>
-<p align="center">Live streams and replays, built with Swift for iPhone, iPad, and Mac.</p>
+<p align="center"><strong>Native Douyu live streaming &amp; replay player for Mac, iPhone, and iPad</strong></p>
+<p align="center">Just live. Natively. · Danmaku · Picture in Picture · Chat density timeline · AI chapters</p>
 <p align="center">Swift · SwiftUI · iOS 26+ · macOS 27+ · GPL-3.0</p>
 
 <p align="center"><a href="README.md">简体中文</a> · English</p>
 
-See who's live, or catch up on a replay. SwiftPeek brings streams, replays, and chat together, with a timeline and AI chapters to help you find the moments you want to watch.
+SwiftPeek is an open-source, third-party Douyu client for macOS, iOS, and iPadOS, built with Swift and SwiftUI.
+Watch live streams or past broadcasts with timed danmaku (scrolling chat), Picture in Picture, and customizable chat overlays.
+Replay timelines show chat density and AI chapter summaries to help you jump to a moment.
 
 > **Standing on the shoulders of giants—and AI.**
 >
@@ -84,7 +86,7 @@ See [capture notes](docs/screenshots/README.md).
 - **Browse streams:** recommendations, categories, room and creator search, and opening rooms by ID or link.
 - **Focused playback:** HTTP-FLV playback with H.264 / AAC, quality and CDN selection, volume, mute, and fullscreen.
 - **Buffering and background handoff:** approximately four seconds of in-memory media buffering, with fresh credentials and a replacement connection prepared before handoff.
-- **Live chat:** scrolling chat overlays and a chat list, with font size, speed, opacity, display area, and keyword filters.
+- **Danmaku and live chat:** scrolling chat overlays and a chat list, with font selection, size, speed, opacity, display area, and keyword filters; optional chat overlays in Picture in Picture.
 - **Replays:** browse a creator's past broadcasts by session and watch them with chat replayed on its original timeline; the scrubber shows chat density and AI chapters, and playback resumes where you left off. [Details (Chinese)](docs/replay.md)
 - **Follows and history:** local storage, plus follow-list files (including watch history) that can be shared through AirDrop and manually merged between Mac and iPhone.
 - **Native interfaces:** SwiftUI, Liquid Glass controls, light and dark appearances, and platform-appropriate window and input behavior.

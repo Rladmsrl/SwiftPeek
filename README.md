@@ -4,13 +4,15 @@
 
 <h1 align="center">SwiftPeek</h1>
 
-<p align="center"><strong>Just live. Natively.</strong></p>
-<p align="center">用 Swift 打造，在 iPhone、iPad 和 Mac 上看直播，也回看精彩。</p>
+<p align="center"><strong>Mac、iPhone 与 iPad 上的原生斗鱼直播与录像客户端</strong></p>
+<p align="center">Just live. Natively. · 同步弹幕 · 画中画 · 弹幕热度时间轴 · AI 章节摘要</p>
 <p align="center">Swift · SwiftUI · iOS 26+ · macOS 27+ · GPL-3.0</p>
 
 <p align="center">简体中文 · <a href="README.en.md">English</a></p>
 
-打开，看看谁在播；错过了，就回看录像。SwiftPeek 把直播、录像和弹幕放在一起，用时间轴与 AI 章节帮你找到想看的片段。
+SwiftPeek 是一个开源的斗鱼第三方客户端，使用 Swift / SwiftUI 构建，支持 macOS、iOS 和 iPadOS。
+你可以观看斗鱼直播、浏览主播录像并回放同步弹幕，也可以通过弹幕热度时间轴与 AI 章节摘要跳转到感兴趣的片段。
+支持画中画、小窗弹幕，以及弹幕字体、字号和可见度调整。
 
 > **站在巨人和 AI 的肩膀上。**
 >
@@ -83,7 +85,7 @@ AI 章节由斗鱼为部分录像提供，包含事件标题与摘要，并非�
 - **浏览直播**：推荐、分类、直播间与主播搜索，支持房间号和链接打开。
 - **专注播放**：H.264 / AAC 的 HTTP-FLV 播放，清晰度与线路切换，音量、静音和全屏。
 - **缓冲与后台换流**：目标约 4 秒内存缓冲，提前准备新凭据与连接，在新流就绪后交接。
-- **弹幕**：滚动弹幕与列表，支持字号、速度、透明度、显示区域和屏蔽词。
+- **弹幕**：滚动弹幕与列表，支持字体、字号、速度、透明度、显示区域和屏蔽词，也可在画中画里显示弹幕。
 - **录像回放**：按场次浏览主播录像，弹幕按原时间轴重放；进度条带弹幕热度与 AI 章节，记住观看进度。[说明](docs/replay.md)
 - **关注与历史**：本地保存；分享关注文件（含观看历史），通过隔空投送在 Mac 和 iPhone 间手动合并。
 - **原生体验**：SwiftUI 界面、Liquid Glass 控件、深浅色外观，以及各平台适合的窗口和交互。
