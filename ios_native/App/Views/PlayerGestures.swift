@@ -2,88 +2,45 @@ import AVFoundation
 import SwiftUI
 import UIKit
 
-// MARK: - 场景桥接
+// MARK: - 播放器所在的场景
 
-/// 需要触达 UIKit 场景的能力集中在这里。
-///
-/// 亮度刻意走 `windowScene.screen` 而不是 `UIScreen.main`：
-/// 后者在双屏设备上语义模糊，Apple 已明示将废弃。
+/// Each player reads the screen from its own current window, including after a fold.
 @MainActor
-enum SceneBridge {
-    static var windowScene: UIWindowScene? {
-        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-        return scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
+final class PlayerSceneContext {
+    weak var window: UIWindow?
+
+    var brightness: Double {
+        get { Double(window?.windowScene?.screen.brightness ?? 0.5) }
+        set { window?.windowScene?.screen.brightness = CGFloat(min(max(newValue, 0), 1)) }
     }
 
-    static var brightness: Double {
-        get { Double(windowScene?.screen.brightness ?? 0.5) }
-        set { windowScene?.screen.brightness = CGFloat(min(max(newValue, 0), 1)) }
+    #if DEBUG
+    func requestOrientation(_ mask: UIInterfaceOrientationMask) {
+        window?.windowScene?.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { _ in }
+    }
+    #endif
+}
+
+struct PlayerSceneReader: UIViewRepresentable {
+    let context: PlayerSceneContext
+
+    func makeUIView(context: Context) -> SceneView {
+        let view = SceneView()
+        view.playerContext = self.context
+        view.isUserInteractionEnabled = false
+        return view
     }
 
-    /// 请求界面旋转。iOS 16 起的官方做法，替代已废弃的
-    /// `UIDevice.setValue(_:forKey:"orientation")` 私有写法。
-    static func requestOrientation(_ mask: UIInterfaceOrientationMask) {
-        guard let scene = windowScene else { return }
-        scene.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
-        scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { error in
-            print("[SceneBridge] 旋转请求被拒绝：\(error.localizedDescription)")
-        }
+    func updateUIView(_ view: SceneView, context: Context) {
+        view.playerContext = self.context
+        self.context.window = view.window
     }
 
-    // MARK: - 方向闸门
-
-    /// AppDelegate 每次旋转都来读这个值。
-    ///
-    /// 默认值按设备族区分：这是设备能力差异（iPad 支持倒置竖屏），
-    /// 与布局决策无关，因此这里用 idiom 判断不违反「布局只看 size class」的原则。
-    static var allowedOrientations: UIInterfaceOrientationMask = defaultOrientations
-
-    private static var defaultOrientations: UIInterfaceOrientationMask {
-        UIDevice.current.userInterfaceIdiom == .pad ? .all : .allButUpsideDown
-    }
-
-    private static var orientationObserver: (any NSObjectProtocol)?
-
-    /// 进入全屏：放开横屏并立即转过去
-    static func enterLandscape() {
-        allowedOrientations = .landscape
-        requestOrientation(.landscapeRight)
-    }
-
-    /// 退出全屏。
-    ///
-    /// 只 `requestOrientation(.portrait)` 是不够的——那只是一次性请求，
-    /// 之后系统仍按允许方向跟随重力：用户横握时会被立刻转回横屏，
-    /// 而横屏又重新满足 compact 高度、再次进入全屏，结果是退不出来。
-    /// 所以先把允许方向压到竖屏，等设备真的回到竖屏再放开。
-    static func returnToPortrait() {
-        allowedOrientations = .portrait
-        requestOrientation(.portrait)
-        releaseGateWhenDeviceReturnsToPortrait()
-    }
-
-    private static func releaseGateWhenDeviceReturnsToPortrait() {
-        // 本来就竖着拿（用按钮进的全屏），无需等待
-        if UIDevice.current.orientation.isPortrait {
-            allowedOrientations = defaultOrientations
-            return
-        }
-        guard orientationObserver == nil else { return }
-        UIDevice.current.beginGeneratingDeviceOrientationNotifications()
-        orientationObserver = NotificationCenter.default.addObserver(
-            forName: UIDevice.orientationDidChangeNotification,
-            object: nil,
-            queue: .main
-        ) { _ in
-            MainActor.assumeIsolated {
-                guard UIDevice.current.orientation.isPortrait else { return }
-                allowedOrientations = defaultOrientations
-                if let observer = orientationObserver {
-                    NotificationCenter.default.removeObserver(observer)
-                    orientationObserver = nil
-                    UIDevice.current.endGeneratingDeviceOrientationNotifications()
-                }
-            }
+    final class SceneView: UIView {
+        weak var playerContext: PlayerSceneContext?
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            playerContext?.window = window
         }
     }
 }
@@ -162,6 +119,7 @@ struct PlayerHUDView: View {
 struct PlayerGestureSurface: View {
     @Binding var volume: Double
     @Binding var hud: PlayerHUD?
+    let sceneContext: PlayerSceneContext
     let isLocked: Bool
     let onSingleTap: () -> Void
     let onDoubleTap: () -> Void
@@ -203,7 +161,7 @@ struct PlayerGestureSurface: View {
                     let isLeftHalf = value.startLocation.x < size.width / 2
                     let kind: PlayerHUD.Kind = isLeftHalf ? .brightness : .volume
                     activeKind = kind
-                    startValue = kind == .brightness ? SceneBridge.brightness : volume
+                    startValue = kind == .brightness ? sceneContext.brightness : volume
                     anchorTranslation = t.height
                 }
 
@@ -214,7 +172,7 @@ struct PlayerGestureSurface: View {
                 let newValue = min(max(startValue + delta, 0), 1)
 
                 switch kind {
-                case .brightness: SceneBridge.brightness = newValue
+                case .brightness: sceneContext.brightness = newValue
                 case .volume: volume = newValue
                 }
                 hudDismissTask?.cancel()

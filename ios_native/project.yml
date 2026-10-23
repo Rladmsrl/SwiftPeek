@@ -31,8 +31,7 @@ targets:
         MARKETING_VERSION: "0.5.0"
         CURRENT_PROJECT_VERSION: "13"
         SWIFT_VERSION: "5.0"
-        # 同时支持 iPhone 与 iPad：iPhone Duo 内屏是 regular/regular，
-        # 按 Apple 指引必须靠 size class 适配，不能锁死 idiom
+        # 支持 iPhone / iPad；布局由容器尺寸和 reserved regions 决定。
         TARGETED_DEVICE_FAMILY: "1,2"
         GENERATE_INFOPLIST_FILE: YES
         # B 白瓷玻璃图标（不透明 1024 母版，由 Xcode 派生各尺寸）
@@ -80,10 +79,10 @@ targets:
             CFBundleURLSchemes:
               - simplelive
               - douyu
-        # 全方向支持：Duo 内屏不遵守 supportedInterfaceOrientations，
-        # 且横屏支架姿态是 Duo 的常见用法
+        # 由系统响应旋转；播放器全屏不再锁定整个 scene 的方向。
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         UISupportedInterfaceOrientations~ipad:
@@ -91,3 +90,18 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
+
+  SimpleLiveUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests
+    dependencies:
+      - target: SimpleLive
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.simplelive.app.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic

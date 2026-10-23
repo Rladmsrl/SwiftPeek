@@ -1,11 +1,6 @@
 import SwiftUI
 import SimpleLiveKit
 
-/// 只为一件事存在：把「当前允许哪些方向」交给 SceneBridge 决定。
-///
-/// `requestGeometryUpdate` 是一次性请求，之后系统仍按
-/// `supportedInterfaceOrientations` 跟随重力。没有这个代理，
-/// 用户横着拿手机点「退出全屏」会被立刻转回横屏，等于退不出来。
 final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
@@ -17,12 +12,6 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         return true
     }
 
-    func application(
-        _ application: UIApplication,
-        supportedInterfaceOrientationsFor window: UIWindow?
-    ) -> UIInterfaceOrientationMask {
-        MainActor.assumeIsolated { SceneBridge.allowedOrientations }
-    }
 }
 
 @main
@@ -84,10 +73,7 @@ struct RootView: View {
                 SearchView(store: search)
             }
         }
-        // sidebarAdaptable：compact 宽度显示底部 Tab Bar，
-        // regular 宽度（iPad / iPhone Duo 内屏）自动切换为侧边栏。
-        // 这是 Apple 推荐的 Duo 折叠姿态适配方式，靠 size class 而非 orientation。
-        .tabViewStyle(.sidebarAdaptable)
+        // 系统决定底部、侧边工具栏与侧边栏的呈现；不通过设备型号推断。
         // iOS 26 起的 Liquid Glass 行为：下滑时 Tab Bar 收缩，让内容成为主角
         .tabBarMinimizeBehavior(.onScrollDown)
     }

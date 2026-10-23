@@ -112,7 +112,7 @@ public struct DouyuSite: LiveSite {
             items.append(
                 LiveRoomItem(
                     roomID: item["rid"].stringValue,
-                    title: item["rn"].stringValue,
+                    title: Self.htmlUnescape(item["rn"].stringValue),
                     cover: item["rs16"].stringValue,
                     userName: item["nn"].stringValue,
                     online: item["ol"].intValue
@@ -146,7 +146,7 @@ public struct DouyuSite: LiveSite {
 
         return LiveRoomDetail(
             roomID: room["room_id"].stringValue,
-            title: room["room_name"].stringValue,
+            title: Self.htmlUnescape(room["room_name"].stringValue),
             cover: room["room_pic"].stringValue,
             userName: room["owner_name"].stringValue,
             userAvatar: room["owner_avatar"].stringValue,
@@ -175,7 +175,7 @@ public struct DouyuSite: LiveSite {
         let isLoop = state.isRecord
         return LiveRoomBrief(
             roomID: room["room_id"].string ?? roomID,
-            title: room["room_name"].stringValue,
+            title: Self.htmlUnescape(room["room_name"].stringValue),
             cover: room["room_pic"].stringValue,
             userName: room["owner_name"].stringValue,
             userAvatar: room["owner_avatar"].stringValue,
@@ -407,7 +407,7 @@ public struct DouyuSite: LiveSite {
         let items = list.map {
             LiveRoomItem(
                 roomID: $0["rid"].stringValue,
-                title: $0["roomName"].stringValue,
+                title: Self.htmlUnescape($0["roomName"].stringValue),
                 cover: $0["roomSrc"].stringValue,
                 userName: $0["nickName"].stringValue,
                 online: Self.parseHotNumber($0["hot"].stringValue)

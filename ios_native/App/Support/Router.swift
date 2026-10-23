@@ -94,6 +94,19 @@ final class Router {
         if let room = defaults.string(forKey: "launchRoom"), !room.isEmpty {
             open(roomID: room)
         }
+
+        // Empty playback page for offline layout checks; no network or fake media.
+        if defaults.bool(forKey: "launchReplayLayout") {
+            selectedTab = .recommend
+            recommendPath = NavigationPath()
+            recommendPath.append(ReplayRoute())
+        }
+
+        if let hashID = defaults.string(forKey: "launchReplayHash"), !hashID.isEmpty {
+            selectedTab = .recommend
+            recommendPath = NavigationPath()
+            recommendPath.append(ReplayRoute(hashID: hashID))
+        }
     }
     #endif
 }

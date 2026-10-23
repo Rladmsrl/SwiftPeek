@@ -5,7 +5,7 @@
 
 ## 构建配置
 
-- `ios_native/project.yml`：iOS 26+，构建 iPhone / iPad 应用。使用自己的签名团队；无签名编译不会安装设备。
+- `ios_native/project.yml`：部署目标 iOS 26+，使用 Xcode 27.1+ / iOS 27.1+ SDK 构建 iPhone、iPhone Duo 与 iPad 应用。使用自己的签名团队；无签名编译不会安装设备。
 - `macos_native/project.yml`：macOS 27+，默认 ad-hoc 签名。
 - 两端都通过 XcodeGen 生成工程，生成目录不纳入版本控制。
 - `DEVELOPER_DIR` 可指定完整 Xcode 的 Developer 目录，避免只使用 Command Line Tools。
@@ -40,10 +40,19 @@
 ./macos_native/Checks/check-mobile-playback.sh macos_native/build/Build/Products/Release
 ./macos_native/Checks/check-follow-sharing.sh macos_native/build/Build/Products/Release
 ./macos_native/Checks/check-replay.sh macos_native/build/Build/Products/Release
+./macos_native/Checks/check-pip-danmaku.sh macos_native/build/Build/Products/Release
 ```
 
 Mac 的 Xcode 测试目标可通过 `build-for-testing` 仅编译。`xcodebuild test` 会启动宿主 App；
 它与上述无窗口检查不同，运行前应留意本机是否有正在使用的实例。
+
+## iPhone Duo 与画中画检查
+
+- [Duo 兼容说明](iphone-duo.md)：折叠 / 展开、横竖屏、折痕避让与离线几何检查命令。
+- `SimpleLiveUITests`：页面、真实播放、折叠传感器回读、全屏和弹幕设置检查。需要真实录像时，使用 `TEST_RUNNER_DUO_REPLAY_HASH` 传入当前公开录像的 ID，不提交播放凭据。
+- 真正的 Duo 方向矩阵需要 Device Hub 控制姿态，并核对实际窗口尺寸；不能仅用 XCTest 的方向枚举作为通过依据。`TEST_RUNNER_DUO_PRESERVE_POSE=1` 保留外部设置，`TEST_RUNNER_DUO_EXPECT_OUTER_WIDTH` 用于目标宽度断言。
+- [小窗弹幕性能说明](pip-danmaku-performance.md)：离线像素 / 调度检查、后台 CPU 合成以及真机诊断字段。
+- 截图、xcresult 和设备诊断仅存放在忽略的 `.local/` 中。模拟器不支持系统 PiP 时必须明确跳过。
 
 ## 必须区分的验证层次
 

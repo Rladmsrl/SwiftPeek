@@ -21,8 +21,7 @@ struct RoomView: View {
     @State private var hud: PlayerHUD?
     @State private var controlsHideTask: Task<Void, Never>?
 
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @State private var sceneContext = PlayerSceneContext()
     @Environment(\.scenePhase) private var scenePhase
     @Environment(AppSettings.self) private var settings
     @Environment(LibraryStore.self) private var library
@@ -34,37 +33,40 @@ struct RoomView: View {
         _playback = State(initialValue: MobileRoomPlaybackSession(roomID: roomID, player: FLVLivePlayer()))
     }
 
-    /// regular 宽度（iPad / iPhone Duo 内屏 / Mac 放大窗口）左右分栏，
-    /// compact 宽度上下堆叠。判断依据是 size class，不是设备型号或方向。
-    private var isWide: Bool { horizontalSizeClass == .regular }
-
-    /// 全屏同样由 size class 驱动：iPhone 横屏是 compact 高度，
-    /// 手动点全屏按钮也会通过旋转落到同一状态。
-    /// iPad 横屏是 regular/regular，因此不会被误判为全屏，保持分栏布局。
-    private var isFullscreen: Bool { wantsFullscreen || verticalSizeClass == .compact }
+    private var isFullscreen: Bool { wantsFullscreen }
 
     private var isFollowed: Bool { library.isFollowed(roomID) }
 
     var body: some View {
-        Group {
-            if isFullscreen {
-                fullscreenLayout
-            } else if isWide {
-                wideLayout
-            } else {
-                compactLayout
+        AdaptivePlaybackContainer(fullscreen: isFullscreen) {
+            playerSurface
+        } companion: {
+            PlaybackCompanion {
+                infoSection
+            } content: {
+                VStack(spacing: 0) {
+                    HStack {
+                        Label("实时弹幕", systemImage: "text.bubble")
+                            .font(.subheadline.weight(.semibold))
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    danmakuList
+                }
             }
         }
+        .background(PlayerSceneReader(context: sceneContext))
         .navigationTitle(store.detail?.userName ?? fallbackTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(isFullscreen ? .hidden : .visible, for: .navigationBar, .tabBar)
         .statusBarHidden(isFullscreen)
         .persistentSystemOverlays(isFullscreen ? .hidden : .automatic)
         .toolbar {
-            // 用文字而不是图标：录像入口没有约定俗成的符号，图标容易看不懂
+            // 标题和符号同时提供，系统可用于横向栏、侧边栏和溢出菜单。
             ToolbarItem(placement: .topBarTrailing) {
                 NavigationLink(value: ReplayRoute(roomID: store.detail?.roomID ?? roomID)) {
-                    Text("录像")
+                    Label("录像", systemImage: "play.rectangle.on.rectangle")
                 }
                 .accessibilityLabel("查看主播的直播录像")
             }
@@ -74,7 +76,7 @@ struct RoomView: View {
                     guard let detail = store.detail else { return }
                     library.toggleFollow(detail: detail)
                 } label: {
-                    Image(systemName: isFollowed ? "star.fill" : "star")
+                    Label(isFollowed ? "取消关注" : "关注", systemImage: isFollowed ? "star.fill" : "star")
                 }
                 .disabled(store.detail == nil)
                 .tint(isFollowed ? Theme.accent : nil)
@@ -97,10 +99,9 @@ struct RoomView: View {
             if UserDefaults.standard.bool(forKey: "launchFullscreen") {
                 enterFullscreen()
             }
-            // 只旋转、不置 wantsFullscreen，用来验证「用户手动转横屏」这条
-            // 纯 size class 驱动的路径能否独立进入全屏
+            // 只旋转：验证横屏仍能访问弹幕面板，不隐式进入全屏。
             if UserDefaults.standard.bool(forKey: "rotateOnly") {
-                SceneBridge.requestOrientation(.landscapeRight)
+                sceneContext.requestOrientation(.landscapeRight)
             }
             if UserDefaults.standard.bool(forKey: "selfCheck") {
                 runSelfCheck()
@@ -137,7 +138,6 @@ struct RoomView: View {
             let isTabSwitch = homeTab != nil && router.selectedTab != homeTab
             guard !isTabSwitch else { return }
 
-            if isFullscreen { SceneBridge.returnToPortrait() }
             playback.close()
             pip.detach()
         }
@@ -151,74 +151,43 @@ struct RoomView: View {
         }
     }
 
-    // MARK: - 三种布局
+    // MARK: - 稳定的播放器宿主
 
-    private var compactLayout: some View {
-        VStack(spacing: 0) {
-            playerSection
-            infoSection
-            danmakuList
-        }
-    }
-
-    private var wideLayout: some View {
-        HStack(alignment: .top, spacing: 0) {
-            VStack(spacing: 0) {
-                playerSection
-                infoSection
-                Spacer(minLength: 0)
-            }
-            .frame(maxWidth: .infinity)
-
-            Divider()
-
-            danmakuList
-                .frame(width: 320)
-        }
-    }
-
-    private var fullscreenLayout: some View {
+    private var playerSurface: some View {
         @Bindable var player = player
-
         return ZStack {
-            Color.black.ignoresSafeArea()
-
+            Color.black
             FLVVideoLayerView(player: player)
-                .ignoresSafeArea()
-
+                .allowsHitTesting(false)
             DanmakuOverlay(
                 messages: store.messages,
                 settings: store.danmakuRenderSettings,
                 isVisible: store.isDanmakuVisible
             )
             .allowsHitTesting(false)
-            .ignoresSafeArea()
 
-            // 手势层必须压在状态层**下面**：它是一张铺满全屏、带 contentShape
-            // 的透明面，放在上面会把「播放」「重试」「切换线路」这些按钮全挡死。
-            PlayerGestureSurface(
-                volume: $player.volume,
-                hud: $hud,
-                isLocked: isLocked,
-                onSingleTap: toggleControls,
-                onDoubleTap: togglePlayback
-            )
-            .ignoresSafeArea()
-
-            playerStatusOverlay
-
-            if let hud {
-                PlayerHUDView(hud: hud)
+            if isFullscreen {
+                PlayerGestureSurface(
+                    volume: $player.volume, hud: $hud, sceneContext: sceneContext,
+                    isLocked: isLocked, onSingleTap: toggleControls, onDoubleTap: togglePlayback
+                )
             }
-
-            // chrome 不 ignoresSafeArea，由系统逐边避让刘海与 Home 指示条
-            if controlsVisible {
-                if isLocked {
-                    lockToggle
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                        .padding(.leading, 16)
-                } else {
-                    fullscreenChrome
+            playerStatusOverlay
+            if let hud { PlayerHUDView(hud: hud) }
+            if isFullscreen {
+                if controlsVisible {
+                    if isLocked {
+                        lockToggle
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                            .padding(.leading, 16)
+                    } else {
+                        fullscreenChrome
+                    }
+                }
+            } else {
+                VStack {
+                    Spacer(minLength: 0)
+                    controlBar
                 }
             }
         }
@@ -287,19 +256,10 @@ struct RoomView: View {
 
     private var fullscreenBottomBar: some View {
         GlassEffectContainer(spacing: 8) {
-            HStack(spacing: 8) {
-                danmakuToggleButton
-                muteButton
-                qualityMenu
-                lineButton
-
-                Spacer(minLength: 0)
-
-                resolutionBadge
-                pipButton
+            ViewThatFits(in: .horizontal) {
+                inlineControlRow(expanded: true, showsFullscreen: false)
+                inlineControlRow(expanded: false, showsFullscreen: false)
             }
-            .buttonStyle(.glass)
-            .controlSize(.small)
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 10)
@@ -317,28 +277,6 @@ struct RoomView: View {
         .buttonBorderShape(.circle)
         .controlSize(.small)
         .accessibilityLabel(isLocked ? "解锁屏幕" : "锁定屏幕")
-    }
-
-    // MARK: - 播放区（非全屏）
-
-    private var playerSection: some View {
-        ZStack {
-            Color.black
-            FLVVideoLayerView(player: player)
-
-            DanmakuOverlay(
-                messages: store.messages,
-                settings: store.danmakuRenderSettings,
-                isVisible: store.isDanmakuVisible
-            )
-            .allowsHitTesting(false)
-
-            playerStatusOverlay
-        }
-        .aspectRatio(Theme.coverAspect, contentMode: .fit)
-        .frame(maxWidth: .infinity)
-        .clipped()
-        .overlay(alignment: .bottom) { controlBar }
     }
 
     @ViewBuilder
@@ -444,23 +382,47 @@ struct RoomView: View {
         .padding(.bottom, 10)
     }
 
-    private func inlineControlRow(expanded: Bool) -> some View {
+    private func inlineControlRow(expanded: Bool, showsFullscreen: Bool = true) -> some View {
         HStack(spacing: 8) {
             danmakuToggleButton
-            muteButton
-            qualityMenu
-            if expanded { lineButton }
+            if expanded {
+                muteButton
+                qualityMenu
+                lineButton
+            } else {
+                Menu {
+                    Button(player.isMuted ? "取消静音" : "静音", systemImage: player.isMuted ? "speaker.wave.2" : "speaker.slash") {
+                        player.isMuted.toggle()
+                        resetControlsTimer()
+                    }
+                    qualityMenu
+                    if store.qualities.isEmpty { lineButton }
+                    if PiPController.isSupported {
+                        Button(isPiPActive ? "退出画中画" : "画中画", systemImage: isPiPActive ? "pip.exit" : "pip.enter") {
+                            pip.toggle()
+                            resetControlsTimer()
+                        }
+                        .disabled(!isPiPActive && !player.isActive)
+                    }
+                } label: {
+                    Label("播放选项", systemImage: "ellipsis")
+                        .labelStyle(.iconOnly)
+                }
+                .accessibilityLabel("播放选项")
+            }
             Spacer(minLength: 0)
             if expanded { resolutionBadge.fixedSize() }
-            pipButton
-            Button { enterFullscreen() } label: {
-                Image(systemName: "arrow.up.left.and.arrow.down.right").font(.system(size: 13))
+            if expanded { pipButton }
+            if showsFullscreen {
+                Button { enterFullscreen() } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right").font(.system(size: 15))
+                }
+                .buttonBorderShape(.circle)
+                .accessibilityLabel("全屏")
             }
-            .buttonBorderShape(.circle)
-            .accessibilityLabel("全屏")
         }
         .buttonStyle(.glass)
-        .controlSize(.small)
+        .controlSize(.regular)
     }
 
     // MARK: - 控制条零件（全屏与非全屏共用）
@@ -585,8 +547,8 @@ struct RoomView: View {
         lines.append("renderer=\(player.audioRenderer.volume)")
         player.volume = savedVolume
 
-        let savedBrightness = SceneBridge.brightness
-        lines.append("scene=\(SceneBridge.windowScene != nil)")
+        let savedBrightness = sceneContext.brightness
+        lines.append("scene=\(sceneContext.window?.windowScene != nil)")
         print("[SELFCHECK] " + lines.joined(separator: " | "))
 
         // 亮度必须写后延迟再读：setter 是异步生效的，
@@ -594,13 +556,13 @@ struct RoomView: View {
         Task { @MainActor in
             var brightness = [String(format: "before=%.3f", savedBrightness)]
             for target in [0.31, 2.0] {
-                SceneBridge.brightness = target
+                sceneContext.brightness = target
                 try? await Task.sleep(for: .milliseconds(500))
-                brightness.append(String(format: "set(%.2f)→%.3f", target, SceneBridge.brightness))
+                brightness.append(String(format: "set(%.2f)→%.3f", target, sceneContext.brightness))
             }
-            SceneBridge.brightness = savedBrightness
+            sceneContext.brightness = savedBrightness
             try? await Task.sleep(for: .milliseconds(500))
-            brightness.append(String(format: "restored=%.3f", SceneBridge.brightness))
+            brightness.append(String(format: "restored=%.3f", sceneContext.brightness))
             print("[SELFCHECK-BRIGHTNESS] " + brightness.joined(separator: " | "))
         }
 
@@ -679,19 +641,19 @@ struct RoomView: View {
     #endif
 
     private func enterFullscreen() {
+        LiveDiagnostics.record("ui.fullscreen", fields: ["page": "live", "enabled": "true"])
         wantsFullscreen = true
         controlsVisible = true
         resetControlsTimer()
-        SceneBridge.enterLandscape()
     }
 
     private func exitFullscreen() {
+        LiveDiagnostics.record("ui.fullscreen", fields: ["page": "live", "enabled": "false"])
         wantsFullscreen = false
         isLocked = false
         controlsVisible = true
         hud = nil  // 否则拖动中途退出，再次进全屏会看到上次残留的 HUD
         controlsHideTask?.cancel()
-        SceneBridge.returnToPortrait()
     }
 
     private func toggleControls() {
@@ -777,14 +739,13 @@ struct RoomView: View {
                     Text(store.detail?.title ?? fallbackTitle)
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(2)
-                    HStack(spacing: 8) {
-                        Text(store.detail?.userName ?? "")
-                        if let online = store.detail?.online, online > 0 {
-                            Label(Theme.formatHot(online), systemImage: "flame.fill")
-                        }
-                        if let duration = store.detail?.liveDuration {
-                            Label(Theme.formatDuration(duration), systemImage: "clock")
-                        }
+                    Text(store.detail?.userName ?? "")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) { roomStatistics }
+                        VStack(alignment: .leading, spacing: 3) { roomStatistics }
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -803,6 +764,18 @@ struct RoomView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .overlay(alignment: .bottom) { Divider() }
+    }
+
+    @ViewBuilder
+    private var roomStatistics: some View {
+        if let online = store.detail?.online, online > 0 {
+            Label(Theme.formatHot(online), systemImage: "flame.fill")
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        if let duration = store.detail?.liveDuration {
+            Label(Theme.formatDuration(duration), systemImage: "clock")
+                .fixedSize(horizontal: true, vertical: false)
+        }
     }
 
     // MARK: - 弹幕列表

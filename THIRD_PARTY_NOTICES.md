@@ -35,6 +35,14 @@ SwiftPeek 是独立维护的衍生项目，不代表上游官方发布，也不�
 `reference/simple_live_core/packages/tars_dart/` 保留自身的 BSD 3-Clause 许可证和
 THE TARS FOUNDATION 版权声明，见该目录的 `LICENSE`。该目录不参与当前原生 App 的构建。
 
+## Appium WebDriverAgent（仅 UI 测试）
+
+- 项目：[appium/WebDriverAgent](https://github.com/appium/WebDriverAgent)
+- 来源：[iPhone Duo hinge control 实现](https://github.com/appium/WebDriverAgent/pull/1287)中的 `XCUIDevice+FBHinge.m`。
+- 用途：`ios_native/UITests/DuoHingeControl.m` 的模拟器折叠驱动和角度回读。
+- 许可证：BSD 3-Clause；完整许可与 Copyright (c) 2015-present, Facebook, Inc. 声明保留在该测试文件头部。
+- 只编入 UI 测试 target，模拟事件仅在 simulator 分支执行，不包含在 SwiftPeek App 产物中。
+
 ## 图标与 AI 协作
 
 当前“白瓷玻璃”应用图标由 AI 图像生成工具产出候选，经维护者选择后进行 iOS / macOS 资源导出。

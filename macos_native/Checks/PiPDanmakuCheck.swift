@@ -1,3 +1,4 @@
+import Darwin
 import AVFoundation
 import CoreImage
 import SimpleLiveKit
@@ -11,6 +12,7 @@ struct PiPDanmakuCheck {
     }
 
     static func main() throws {
+        setbuf(stdout, nil)
         let old = try JSONDecoder().decode(SettingsData.self, from: Data("{\"playerVolume\":0.4}".utf8))
         precondition(!old.pictureInPictureDanmaku && old.floatingWindowOnTop && old.playerVolume == 0.4 && old.danmakuFont == .system)
         var custom = old
@@ -99,7 +101,100 @@ struct PiPDanmakuCheck {
         precondition(pixels(CMSampleBufferGetImageBuffer(hidden)!) == plain, "Turning off danmaku removes the actual pixels")
         print("PASS: composited video pixels contain text, preserve video and clear when disabled")
 
+        // Sample timestamps must match the renderer clock, not the animation clock.
+        let mediaSample = compositor.compose(pixel, snapshot: visible, at: 50_000,
+                                             presentationTimeStamp: CMTime(seconds: 12, preferredTimescale: 600))!
+        precondition(CMSampleBufferGetPresentationTimeStamp(mediaSample).seconds == 12)
+        let attachments = CMSampleBufferGetSampleAttachmentsArray(mediaSample, createIfNecessary: false) as? [[String: Any]]
+        precondition(attachments?.first?[kCMSampleAttachmentKey_DisplayImmediately as String] as? Bool != true)
+        print("PASS: media-clock timestamps do not conflict with DisplayImmediately")
+
+        cadenceCheck()
         try decodeCheck(pixel)
+        pumpCheck(pixel)
+    }
+
+    static func cadenceCheck() {
+        for fps in [24, 25, 30, 50, 60] {
+            var cadence = PiPVideoSamplingClock()
+            let accepted = (0..<(fps * 4)).filter { index in
+                cadence.accepts(Double(index) / Double(fps) + (index % 2 == 0 ? 0.000_000_01 : 0))
+            }.count
+            precondition(abs(accepted - min(30, fps) * 4) <= 1, "Input sampling must not halve 30fps video")
+        }
+        print("PASS: 24/25/30/50/60 fps inputs retain the expected sampling cadence")
+    }
+
+    final class PumpProbe: @unchecked Sendable {
+        let lock = NSLock()
+        let pixel: CVPixelBuffer // Immutable fixture, read by the worker only.
+        var seeded = false
+        var count = 0
+        var ready = true
+        var pts: [Double] = []
+        var firstPixels: Data?
+        var lastPixels: Data?
+        init(pixel: CVPixelBuffer) { self.pixel = pixel }
+        func receive(_ sample: CMSampleBuffer) {
+            lock.lock()
+            defer { lock.unlock() }
+            count += 1
+            pts.append(CMSampleBufferGetPresentationTimeStamp(sample).seconds)
+            if let buffer = CMSampleBufferGetImageBuffer(sample) {
+                let image = pixels(buffer)
+                if firstPixels == nil { firstPixels = image }
+                lastPixels = image
+            }
+        }
+        func read<T>(_ body: (PumpProbe) -> T) -> T {
+            lock.lock(); defer { lock.unlock() }
+            return body(self)
+        }
+    }
+
+    static func pumpCheck(_ pixel: CVPixelBuffer) {
+        let probe = PumpProbe(pixel: pixel)
+        let pump = PiPFramePump(timebase: nil, isReady: { probe.read { $0.ready } },
+                                enqueue: { probe.receive($0) }, flush: {})
+        let snapshot = PiPDanmakuSnapshot(messages: [message("独立于主线程的平滑弹幕")], isVisible: true, sourceID: "pump")
+        pump.start(generation: 1) { token in
+            let seed = probe.read { value in
+                if value.seeded { return false }
+                value.seeded = true
+                return true
+            }
+            if seed {
+                pump.submit(.init(frame: probe.pixel, snapshot: snapshot, hostTime: CACurrentMediaTime(),
+                                  mediaTime: CMTime(seconds: 10, preferredTimescale: 600), rate: 1), generation: token)
+            }
+            // Deliberately stop publishing inputs, like a UI thread occupied by a long task.
+        }
+        Thread.sleep(forTimeInterval: 0.8)
+        let frames = probe.read { $0.count }
+        precondition(frames >= 30, "Animation must continue at a useful cadence without UI callbacks")
+        precondition(probe.read { $0.firstPixels != $0.lastPixels }, "Cached-input danmaku must keep moving")
+        precondition(probe.read { $0.pts.allSatisfy { $0 >= 10 && $0 < 12 } }, "PTS must remain in media time")
+        probe.read { $0.ready = false }
+        Thread.sleep(forTimeInterval: 0.05) // Let one in-flight frame finish.
+        let beforePressure = probe.read { $0.count }
+        Thread.sleep(forTimeInterval: 0.12)
+        precondition(probe.read { $0.count } == beforePressure, "Backpressure must stop enqueueing")
+        pump.stop()
+        let stopped = probe.read { $0.count }
+        Thread.sleep(forTimeInterval: 0.1)
+        precondition(probe.read { $0.count } == stopped, "stop must reject late frames")
+        probe.read { $0.ready = true }
+        pump.start(generation: 2) { _ in }
+        let input = PiPFramePump.Input(frame: pixel, snapshot: snapshot, hostTime: CACurrentMediaTime(),
+                                       mediaTime: CMTime(seconds: 20, preferredTimescale: 600), rate: 1)
+        pump.submit(input, generation: 1)
+        Thread.sleep(forTimeInterval: 0.1)
+        precondition(probe.read { $0.count } == stopped, "A stale producer cannot feed a new PiP session")
+        pump.submit(input, generation: 2)
+        Thread.sleep(forTimeInterval: 0.15)
+        pump.stop()
+        precondition(probe.read { $0.count } > stopped, "A new PiP session must resume normally")
+        print("PASS: worker animation (\(frames) frames/0.8s), backpressure, stop and stale-generation rejection")
     }
 
     static func makePixel() -> CVPixelBuffer {

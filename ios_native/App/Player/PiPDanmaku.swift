@@ -1,5 +1,4 @@
 import AVFoundation
-import CoreImage
 import CoreText
 import SimpleLiveKit
 import Observation
@@ -118,11 +117,10 @@ final class PiPDanmakuTimeline {
     }
 }
 
-/// GPU composition into a reusable, bounded 960-pixel video surface. This does
-/// not record or encode video. Used only for iOS PiP with the option enabled.
+/// CPU composition into reusable, bounded 960-pixel surfaces. This remains usable
+/// when iOS restricts application GPU access in the background. No video encoding.
 final class PiPFrameCompositor {
     let timeline = PiPDanmakuTimeline()
-    private let context = CIContext(options: [.cacheIntermediates: false])
     private let colorSpace = CGColorSpaceCreateDeviceRGB()
     private var pool: CVPixelBufferPool?
     private var outputSize = CGSize.zero
@@ -135,7 +133,8 @@ final class PiPFrameCompositor {
         outputSize = .zero
     }
 
-    func compose(_ frame: CVPixelBuffer, snapshot: PiPDanmakuSnapshot, at time: TimeInterval) -> CMSampleBuffer? {
+    func compose(_ frame: CVPixelBuffer, snapshot: PiPDanmakuSnapshot, at time: TimeInterval,
+                 presentationTimeStamp: CMTime? = nil) -> CMSampleBuffer? {
         let width = CGFloat(CVPixelBufferGetWidth(frame)), height = CGFloat(CVPixelBufferGetHeight(frame))
         guard width > 0, height > 0 else { return nil }
         let scale = min(1, 960 / max(width, height))
@@ -155,33 +154,41 @@ final class PiPFrameCompositor {
         }
         guard let pool else { return nil }
         var pixel: CVPixelBuffer?
-        let limits = [kCVPixelBufferPoolAllocationThresholdKey as String: 4] as CFDictionary
+        let limits = [kCVPixelBufferPoolAllocationThresholdKey as String: 6] as CFDictionary
         guard CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(nil, pool, limits, &pixel) == kCVReturnSuccess,
               let pixel else { return nil }
         let canvas = CGSize(width: 480, height: 480 * size.height / size.width)
         timeline.update(snapshot, size: canvas, at: time)
-        var image = CIImage(cvPixelBuffer: frame).transformed(by: .init(scaleX: size.width / width, y: size.height / height))
-        let factor = size.width / canvas.width
-        for item in timeline.items {
-            let origin = timeline.origin(for: item)
-            let overlay = CIImage(cgImage: item.image)
-                .applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: item.opacity)])
-                .transformed(by: .init(scaleX: factor / 2, y: factor / 2))
-                .transformed(by: .init(translationX: origin.x * factor, y: origin.y * factor))
-            image = overlay.composited(over: image)
-        }
-        context.render(image, to: pixel, bounds: CGRect(origin: .zero, size: size), colorSpace: colorSpace)
+        guard PiPPixelTransfer.copy(frame, to: pixel), drawMessages(into: pixel, size: size, canvas: canvas) else { return nil }
         if format == nil { CMVideoFormatDescriptionCreateForImageBuffer(allocator: nil, imageBuffer: pixel, formatDescriptionOut: &format) }
         guard let format else { return nil }
-        var timing = CMSampleTimingInfo(duration: .invalid, presentationTimeStamp: CMTime(seconds: time, preferredTimescale: 600), decodeTimeStamp: .invalid)
+        var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: 60),
+                                        presentationTimeStamp: presentationTimeStamp ?? CMTime(seconds: time, preferredTimescale: 60_000),
+                                        decodeTimeStamp: .invalid)
         var sample: CMSampleBuffer?
         CMSampleBufferCreateReadyWithImageBuffer(allocator: nil, imageBuffer: pixel, formatDescription: format,
                                                sampleTiming: &timing, sampleBufferOut: &sample)
-        if let sample, let array = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: true) {
-            let dictionary = unsafeBitCast(CFArrayGetValueAtIndex(array, 0), to: CFMutableDictionary.self)
-            CFDictionarySetValue(dictionary, Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
-                                 Unmanaged.passUnretained(kCFBooleanTrue).toOpaque())
-        }
+        // A control timebase is used by PiP. Keep PTS in that same clock domain;
+        // combining it with DisplayImmediately is explicitly discouraged by AVFoundation.
         return sample
+    }
+
+    private func drawMessages(into buffer: CVPixelBuffer, size: CGSize, canvas: CGSize) -> Bool {
+        guard !timeline.items.isEmpty else { return true }
+        guard CVPixelBufferLockBaseAddress(buffer, []) == kCVReturnSuccess else { return false }
+        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        guard let bitmap = CGContext(data: CVPixelBufferGetBaseAddress(buffer),
+                                     width: Int(size.width), height: Int(size.height), bitsPerComponent: 8,
+                                     bytesPerRow: CVPixelBufferGetBytesPerRow(buffer), space: colorSpace,
+                                     bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue)
+        else { return false }
+        bitmap.scaleBy(x: size.width / canvas.width, y: size.height / canvas.height)
+        for item in timeline.items {
+            let origin = timeline.origin(for: item)
+            guard origin.x < canvas.width, origin.x + item.size.width > 0 else { continue }
+            bitmap.setAlpha(item.opacity)
+            bitmap.draw(item.image, in: CGRect(origin: origin, size: item.size))
+        }
+        return true
     }
 }

@@ -9,6 +9,8 @@ export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Develope
 xcrun swiftc -swift-version 5 -target "$(uname -m)-apple-macos27.0" \
   -I "$products_dir" "$products_dir/SimpleLiveKit.o" \
   "$repo_dir/ios_native/App/Player/PiPDanmaku.swift" \
+  "$repo_dir/ios_native/App/Player/PiPPixelTransfer.swift" \
+  "$repo_dir/ios_native/App/Player/PiPFramePump.swift" \
   "$repo_dir/ios_native/App/Player/PiPLiveFrameSource.swift" \
   "$repo_dir/ios_native/App/Player/DanmakuOverlay.swift" \
   "$repo_dir/ios_native/App/Player/DanmakuTextRasterizer.swift" \

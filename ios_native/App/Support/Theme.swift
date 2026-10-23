@@ -26,25 +26,6 @@ enum Theme {
     }
 }
 
-/// 自适应列宽。
-///
-/// 刻意不读取 `UIScreen.main`（Apple 已声明在双屏设备上语义模糊、将被废弃），
-/// 而是用 size class 决定卡片最小宽度，再交给 `.adaptive` 按实际容器宽度排布。
-/// 这样在 iPhone 18 Pro 竖屏、横屏、iPhone Duo 内外屏以及 Split View 下都成立。
-#if os(iOS)
-struct AdaptiveGrid {
-    let horizontalSizeClass: UserInterfaceSizeClass?
-
-    var minimumCardWidth: CGFloat {
-        horizontalSizeClass == .regular ? 220 : 160
-    }
-
-    var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: minimumCardWidth), spacing: 12)]
-    }
-}
-#endif
-
 /// 加载阶段，替代散落各处的 isLoading / errorMessage 组合
 enum LoadPhase: Equatable {
     case idle

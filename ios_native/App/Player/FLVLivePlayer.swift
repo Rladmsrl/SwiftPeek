@@ -1186,6 +1186,7 @@ struct FLVVideoLayerView: UIViewRepresentable {
     func makeUIView(context: Context) -> LayerHostView {
         let view = LayerHostView()
         view.backgroundColor = .black
+        view.isUserInteractionEnabled = false
         view.hostedLayer = player.displayLayer
         return view
     }

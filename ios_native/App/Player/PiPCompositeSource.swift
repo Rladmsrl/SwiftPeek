@@ -2,8 +2,8 @@
 import AVFoundation
 import AVKit
 
-/// Supplies composited frames only during a PiP session. If frames are not ready,
-/// AVKit keeps its original content source; no black placeholder is substituted.
+/// The main actor only snapshots UI-owned state and attaches the layer.
+/// A bounded background pump animates and submits PiP frames independently.
 @MainActor
 final class PiPCompositeSource {
     let layer = AVSampleBufferDisplayLayer()
@@ -12,64 +12,64 @@ final class PiPCompositeSource {
     var parent: (() -> CALayer?)?
     var playbackTime: (() -> (CMTime, Float))?
     var onReady: (() -> Void)?
-    private let compositor = PiPFrameCompositor()
-    private var timer: Timer?
+    private let pump: PiPFramePump
+    private var generation = 0
+    private var running = false
     private var ready = false
     private var lastFrame: CVPixelBuffer?
-    private var timebase: CMTimebase?
-
-    deinit { timer?.invalidate() }
 
     init() {
+        var timebase: CMTimebase?
         CMTimebaseCreateWithSourceClock(allocator: nil, sourceClock: CMClockGetHostTimeClock(), timebaseOut: &timebase)
         layer.controlTimebase = timebase
+        let renderer = layer.sampleBufferRenderer
+        pump = PiPFramePump(timebase: timebase, isReady: {
+            if renderer.status == .failed { renderer.flush() }
+            return renderer.isReadyForMoreMediaData
+        }, enqueue: { renderer.enqueue($0) }, flush: { renderer.flush() })
     }
 
     func start() {
-        guard timer == nil else { return }
-        tick()
-        let timer = Timer(timeInterval: 1 / 24, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.tick() }
+        guard !running else { return }
+        running = true
+        generation += 1
+        pump.start(generation: generation) { [weak self] token in
+            Task { @MainActor [weak self] in self?.capture(generation: token) }
         }
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
     }
 
-    private func tick() {
-        autoreleasepool {
-            guard let snapshot = snapshot?() else { return }
-            if let timebase, let (time, rate) = playbackTime?(), time.isNumeric {
-                CMTimebaseSetRateAndAnchorTime(timebase, rate: Float64(rate), anchorTime: time,
-                                              immediateSourceTime: CMClockGetTime(CMClockGetHostTimeClock()))
-            }
-            if let fresh = frame?() { lastFrame = fresh }
-            guard let lastFrame else { return }
-            if layer.superlayer == nil, let parent = parent?() {
-                // Keep the original inline video in front; AVKit mirrors this source.
-                parent.insertSublayer(layer, at: 0)
-            }
-            guard layer.superlayer != nil else { return }
-            layer.frame = layer.superlayer?.bounds ?? .zero
-            let renderer = layer.sampleBufferRenderer
-            if renderer.status == .failed { renderer.flush() }
-            guard renderer.isReadyForMoreMediaData,
-                  let sample = compositor.compose(lastFrame, snapshot: snapshot, at: CACurrentMediaTime()) else { return }
-            renderer.enqueue(sample)
-            if !ready, layer.isReadyForDisplay {
-                ready = true
-                onReady?()
-            }
+    private func capture(generation token: Int) {
+        guard running, generation == token else { return }
+        guard let snapshot = snapshot?() else { pump.submit(nil, generation: token); return }
+        if let fresh = frame?() { lastFrame = fresh }
+        if layer.superlayer == nil, let parent = parent?() {
+            // The original inline video stays in front; AVKit mirrors this source.
+            parent.insertSublayer(layer, at: 0)
+        }
+        guard layer.superlayer != nil, let lastFrame else { pump.submit(nil, generation: token); return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.frame = layer.superlayer?.bounds ?? .zero
+        CATransaction.commit()
+        let now = CACurrentMediaTime()
+        let (mediaTime, rate) = playbackTime?() ?? (CMTime(seconds: now, preferredTimescale: 60_000), 1)
+        guard mediaTime.isNumeric, rate.isFinite else { pump.submit(nil, generation: token); return }
+        pump.submit(.init(frame: lastFrame, snapshot: snapshot, hostTime: now, mediaTime: mediaTime, rate: rate), generation: token)
+        if !ready, layer.isReadyForDisplay {
+            ready = true
+            onReady?()
         }
     }
 
     func stop() {
-        timer?.invalidate()
-        timer = nil
+        running = false
+        generation += 1
+        pump.stop()
         layer.removeFromSuperlayer()
-        layer.sampleBufferRenderer.flush()
         lastFrame = nil
         ready = false
-        compositor.reset()
     }
+
+    deinit { pump.stop() }
 }
 #endif

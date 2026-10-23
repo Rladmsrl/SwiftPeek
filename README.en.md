@@ -4,7 +4,7 @@
 
 <h1 align="center">SwiftPeek</h1>
 
-<p align="center"><strong>Native Douyu live streaming &amp; replay player for Mac, iPhone, and iPad</strong></p>
+<p align="center"><strong>Native Douyu live streaming &amp; replay player for Mac, iPhone Duo, iPhone, and iPad</strong></p>
 <p align="center">Just live. Natively. · Danmaku · Picture in Picture · Chat density timeline · AI chapters</p>
 <p align="center">Swift · SwiftUI · iOS 26+ · macOS 27+ · GPL-3.0</p>
 
@@ -13,6 +13,7 @@
 SwiftPeek is an open-source, third-party Douyu client for macOS, iOS, and iPadOS, built with Swift and SwiftUI.
 Watch live streams or past broadcasts with timed danmaku (scrolling chat), Picture in Picture, and customizable chat overlays.
 Replay timelines show chat density and AI chapter summaries to help you jump to a moment.
+**iPhone Duo support** includes adaptive layouts for the foldable inner and outer displays, portrait, landscape, and partially folded poses.
 
 > **Standing on the shoulders of giants—and AI.**
 >
@@ -25,6 +26,18 @@ Replay timelines show chat density and AI chapter summaries to help you jump to 
 **The current native version supports Douyu only.** Dart code for other platforms is retained as migration reference; it does not mean those platforms are supported by the native apps.
 The `reference/` directory is excluded from native builds and marked as vendored code in `.gitattributes`, so it does not count toward GitHub's language statistics.
 The project is still evolving. Feedback from actual playback, background transitions, and cross-device sharing is welcome.
+
+## iPhone Duo support
+
+SwiftPeek adapts Douyu live streams, replays, and danmaku to the space available on iPhone Duo:
+
+- **Fold and unfold:** video and chat / episodes stack in narrow spaces and sit side by side in wider spaces, preserving the current page, playback session, and replay position.
+- **Portrait, landscape, and partial folds:** video, recommendation cards, and controls avoid the fold; native navigation adapts across displays, and exiting fullscreen keeps the current pose.
+- **PiP danmaku:** live streams and replays share an independent composition queue with CPU/vImage drawing to improve background chat animation.
+
+Pose and interaction checks were completed on the iPhone Duo / iOS 27.1 Simulator. The maintainer also installed and tried the build on an iOS 27.2 device and confirmed it was usable.
+Actual PiP display rates depend on the device and load; a 60 fps scheduling target is not a claim of a constant measured device frame rate.
+See [Duo compatibility and validation](docs/iphone-duo.md) and [PiP danmaku performance](docs/pip-danmaku-performance.md) (Chinese).
 
 ## Screenshots
 
@@ -77,7 +90,7 @@ Douyu provides AI chapters for some replays, including event titles and summarie
 
 </details>
 
-These are actual v0.5.0 screenshots, captured in the iOS Simulator and native macOS app windows.
+These are earlier v0.5.0 screenshots, captured in the iOS Simulator and native macOS app windows; they do not show the new Duo layouts.
 Stream covers and titles are public content at capture time and may change. Screenshots do not establish sustained playback reliability.
 See [capture notes](docs/screenshots/README.md).
 
@@ -89,11 +102,12 @@ See [capture notes](docs/screenshots/README.md).
 - **Danmaku and live chat:** scrolling chat overlays and a chat list, with font selection, size, speed, opacity, display area, and keyword filters; optional chat overlays in Picture in Picture.
 - **Replays:** browse a creator's past broadcasts by session and watch them with chat replayed on its original timeline; the scrubber shows chat density and AI chapters, and playback resumes where you left off. [Details (Chinese)](docs/replay.md)
 - **Follows and history:** local storage, plus follow-list files (including watch history) that can be shared through AirDrop and manually merged between Mac and iPhone.
+- **iPhone Duo compatibility:** adaptive inner and outer displays, portrait, landscape, and partial folds, with playback sessions preserved across changes.
 - **Native interfaces:** SwiftUI, Liquid Glass controls, light and dark appearances, and platform-appropriate window and input behavior.
 
 | | iOS / iPadOS | macOS |
 | --- | --- | --- |
-| Interface | Tabs, adaptive split layouts, landscape playback | Sidebar, adaptive cards, separate stream windows |
+| Interface | Tabs, adaptive split layouts, portrait / landscape, iPhone Duo foldable layouts | Sidebar, adaptive cards, separate stream windows |
 | Input | Touch gestures, volume and brightness controls | Mouse, keyboard shortcuts, resizable windows |
 | Floating playback | System Picture in Picture, optional danmaku | Movable, resizable window with optional pinning and danmaku |
 | Background behavior | Follows background-audio and PiP preferences | Stream windows keep playing while browsing the main window |
@@ -131,7 +145,7 @@ An AI assessment or a passing build is not a substitute for complete testing.
 
 ### Requirements
 
-- A macOS development environment with Xcode 27 or newer and the iOS 26+ / macOS 27+ SDKs.
+- A macOS development environment. Build iOS / iPhone Duo with Xcode 27.1 or newer and the iOS 27.1+ SDK; the deployment target remains iOS 26. The Mac app requires the macOS 27+ SDK.
 - Swift 6.2 or newer; the current source uses Swift 5 language mode.
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen), which generates the Xcode projects from `project.yml`.
 

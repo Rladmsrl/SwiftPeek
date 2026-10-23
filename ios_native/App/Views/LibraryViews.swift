@@ -40,7 +40,7 @@ struct FollowView: View {
                     }
                 }
             }
-            .safeAreaInset(edge: .bottom) {
+            .safeAreaBar(edge: .bottom) {
                 VStack(spacing: 7) {
                     FollowTransferActions().buttonStyle(.glass).controlSize(.regular)
                     Text("通过隔空投送，把关注和观看历史合并到另一台设备")
@@ -140,7 +140,7 @@ struct HistoryView: View {
             .toolbar {
                 if !library.history.isEmpty {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button("清空", role: .destructive) { showClearConfirm = true }
+                        Button("清空", systemImage: "trash", role: .destructive) { showClearConfirm = true }
                     }
                 }
             }

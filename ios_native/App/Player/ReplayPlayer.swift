@@ -462,6 +462,7 @@ struct ReplayVideoView: UIViewRepresentable {
     func makeUIView(context: Context) -> HostView {
         let view = HostView()
         view.backgroundColor = .black
+        view.isUserInteractionEnabled = false
         view.layer.addSublayer(player.playerLayer)
         view.onAttach = onAttach
         return view

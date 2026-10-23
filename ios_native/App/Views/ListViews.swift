@@ -6,12 +6,10 @@ struct RecommendView: View {
     @Binding var path: NavigationPath
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
-    private var grid: AdaptiveGrid { AdaptiveGrid(horizontalSizeClass: horizontalSizeClass) }
-
     var body: some View {
         NavigationStack(path: $path) {
             ScrollView {
-                LazyVGrid(columns: grid.columns, spacing: 18) {
+                ResponsiveMediaGrid(minimumWidth: horizontalSizeClass == .regular ? 220 : 160) {
                     ForEach(store.rooms) { room in
                         NavigationLink(value: RoomRoute(roomID: room.roomID, title: room.title)) {
                             RoomCard(room: room)
@@ -81,11 +79,9 @@ struct CategoryRoomsView: View {
         _store = State(initialValue: CategoryRoomsStore(category: category))
     }
 
-    private var grid: AdaptiveGrid { AdaptiveGrid(horizontalSizeClass: horizontalSizeClass) }
-
     var body: some View {
         ScrollView {
-            LazyVGrid(columns: grid.columns, spacing: 18) {
+            ResponsiveMediaGrid(minimumWidth: horizontalSizeClass == .regular ? 220 : 160) {
                 ForEach(store.rooms) { room in
                     NavigationLink(value: RoomRoute(roomID: room.roomID, title: room.title)) {
                         RoomCard(room: room)
@@ -117,8 +113,6 @@ struct SearchView: View {
         self.store = store
     }
 
-    private var grid: AdaptiveGrid { AdaptiveGrid(horizontalSizeClass: horizontalSizeClass) }
-
     var body: some View {
         NavigationStack(path: $path) {
             ScrollView {
@@ -134,7 +128,7 @@ struct SearchView: View {
 
                 switch store.scope {
                 case .rooms:
-                    LazyVGrid(columns: grid.columns, spacing: 18) {
+                    ResponsiveMediaGrid(minimumWidth: horizontalSizeClass == .regular ? 220 : 160) {
                         ForEach(store.rooms) { room in
                             NavigationLink(value: RoomRoute(roomID: room.roomID, title: room.title)) {
                                 RoomCard(room: room)

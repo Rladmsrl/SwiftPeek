@@ -1,6 +1,23 @@
 import AVFoundation
-import CoreImage
 import VideoToolbox
+
+/// Advance a sampling deadline instead of waiting a full interval after the
+/// last accepted source frame. The latter turns 30 fps input / 24 fps output
+/// into 15 fps and also loses frames to floating-point rounding at 30 fps.
+struct PiPVideoSamplingClock {
+    private var nextTime: TimeInterval?
+    mutating func accepts(_ time: TimeInterval) -> Bool {
+        guard time.isFinite else { return false }
+        let step = 1 / 30.0
+        if let nextTime, time + 0.000_001 < nextTime { return false }
+        if let nextTime {
+            self.nextTime = nextTime + (floor(max(0, time - nextTime) / step) + 1) * step
+        } else {
+            nextTime = time + step
+        }
+        return true
+    }
+}
 
 /// Optional second decoder for iOS PiP composition. The normal live renderer and
 /// audio clock stay untouched. Decode input is serialized; output is bounded to
@@ -8,14 +25,14 @@ import VideoToolbox
 final class PiPLiveFrameSource: @unchecked Sendable {
     private let decodeLock = NSLock()
     private let frameLock = NSLock()
+    private let processingLock = NSLock()
     private var enabled = false
     private var session: VTDecompressionSession?
     private var format: CMFormatDescription?
     private var frames: [(CMTime, CVPixelBuffer)] = []
     private var lastInput = CMTime.invalid
     private var epoch = 0
-    private let context = CIContext(options: [.cacheIntermediates: false])
-    private var lastStoredTime = -Double.infinity
+    private var cadence = PiPVideoSamplingClock()
     private var pool: CVPixelBufferPool?
     private var poolSize = CGSize.zero
 
@@ -28,18 +45,20 @@ final class PiPLiveFrameSource: @unchecked Sendable {
     }
 
     private func resetDecoder() {
-        // Decoder callbacks only acquire frameLock, never decodeLock.
+        // Decoder callbacks never acquire decodeLock; invalidate before clearing output state.
         if let session { VTDecompressionSessionInvalidate(session) }
         session = nil
         format = nil
         lastInput = .invalid
         frameLock.lock()
-        lastStoredTime = -Double.infinity
-        pool = nil
-        poolSize = .zero
         epoch += 1
         frames.removeAll()
         frameLock.unlock()
+        processingLock.lock()
+        cadence = PiPVideoSamplingClock()
+        pool = nil
+        poolSize = .zero
+        processingLock.unlock()
     }
 
     func append(_ sample: CMSampleBuffer) {
@@ -54,7 +73,7 @@ final class PiPLiveFrameSource: @unchecked Sendable {
         lastInput = pts
         if session == nil {
             let attributes: [String: Any] = [
-                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
                 kCVPixelBufferIOSurfacePropertiesKey as String: [:],
                 kCVPixelBufferMetalCompatibilityKey as String: true,
             ]
@@ -70,15 +89,19 @@ final class PiPLiveFrameSource: @unchecked Sendable {
         // No asynchronous flag: avoid a growing queue of compressed input.
         VTDecompressionSessionDecodeFrame(session, sampleBuffer: sample, flags: [], infoFlagsOut: nil) { [weak self] status, _, image, timestamp, _ in
             guard status == noErr, let image, let self else { return }
+            self.processingLock.lock()
+            defer { self.processingLock.unlock() }
+            self.frameLock.lock()
+            let current = token == self.epoch
+            self.frameLock.unlock()
+            guard current, self.cadence.accepts(timestamp.seconds), let small = self.downsample(image) else { return }
+            // Scaling never holds the lock used by the playback/UI reader.
             self.frameLock.lock()
             defer { self.frameLock.unlock() }
             guard token == self.epoch else { return }
-            guard timestamp.seconds >= self.lastStoredTime + 1 / 24.0,
-                  let small = self.downsample(image) else { return }
-            self.lastStoredTime = timestamp.seconds
             self.frames.append((timestamp, small))
             self.frames.sort { $0.0 < $1.0 }
-            // Reduced to 480 pixels / 24 fps before retaining; enough for the
+            // Reduced to 480 pixels / 30 fps before retaining; enough for the
             // live player's ~4-second lookahead without retaining full-size 4K frames.
             let bytes = max(1, CVPixelBufferGetDataSize(small))
             let limit = min(180, max(2, 96 * 1024 * 1024 / bytes))
@@ -86,7 +109,7 @@ final class PiPLiveFrameSource: @unchecked Sendable {
         }
     }
 
-    // Called with frameLock held, including from decoder callbacks.
+    // Called only while processingLock is held. Readers never acquire this lock.
     private func downsample(_ frame: CVPixelBuffer) -> CVPixelBuffer? {
         let width = CGFloat(CVPixelBufferGetWidth(frame)), height = CGFloat(CVPixelBufferGetHeight(frame))
         let scale = min(1, 480 / max(width, height))
@@ -107,8 +130,7 @@ final class PiPLiveFrameSource: @unchecked Sendable {
         let limits = [kCVPixelBufferPoolAllocationThresholdKey as String: 184] as CFDictionary
         guard CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(nil, pool, limits, &pixel) == kCVReturnSuccess,
               let pixel else { return nil }
-        context.render(CIImage(cvPixelBuffer: frame).transformed(by: .init(scaleX: size.width / width, y: size.height / height)),
-                       to: pixel, bounds: CGRect(origin: .zero, size: size), colorSpace: CGColorSpaceCreateDeviceRGB())
+        guard PiPPixelTransfer.copy(frame, to: pixel) else { return nil }
         return pixel
     }
 

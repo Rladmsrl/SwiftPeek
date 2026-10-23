@@ -8,9 +8,16 @@ struct PlayerDanmakuControl: View {
     var onToggle: () -> Void = {}
     @State private var isPresented = false
     #if os(iOS)
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     #endif
+
+    private var controlHeight: CGFloat {
+        #if os(macOS)
+        30
+        #else
+        44
+        #endif
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -20,7 +27,7 @@ struct PlayerDanmakuControl: View {
             } label: {
                 Text("弹幕").font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.white.opacity(isVisible ? 1 : 0.45))
-                    .frame(width: 36, height: 30).contentShape(.rect)
+                    .frame(width: max(36, controlHeight), height: controlHeight).contentShape(.rect)
             }
             .accessibilityLabel(isVisible ? "隐藏弹幕" : "显示弹幕")
             .accessibilityValue(isVisible ? "已开启" : "已关闭")
@@ -29,7 +36,7 @@ struct PlayerDanmakuControl: View {
             Button { isPresented = true } label: {
                 Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
                     .foregroundStyle(.white.opacity(0.8))
-                    .frame(width: 24, height: 30).contentShape(.rect)
+                    .frame(width: controlHeight == 30 ? 24 : 44, height: controlHeight).contentShape(.rect)
             }
             .accessibilityLabel("弹幕设置")
             .help("字体、字号、可见度与画中画弹幕")
@@ -52,10 +59,10 @@ struct PlayerDanmakuControl: View {
             .preferredColorScheme(.dark)
         #else
         PlayerDanmakuPanel(isVisible: $isVisible) { isPresented = false }
-            .frame(width: horizontalSizeClass == .regular || verticalSizeClass == .compact ? 320 : nil,
-                   height: verticalSizeClass == .compact ? 280 : 560)
+            .frame(idealWidth: 320, maxWidth: 380,
+                   idealHeight: 480, maxHeight: 560)
             .presentationCompactAdaptation(verticalSizeClass == .compact ? .popover : .sheet)
-            .presentationDetents([.height(580)])
+            .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
             .preferredColorScheme(.dark)
         #endif

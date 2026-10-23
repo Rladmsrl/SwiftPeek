@@ -30,10 +30,6 @@ struct ReplayListView: View {
         _store = State(initialValue: ReplayListStore(roomID: roomID))
     }
 
-    private var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: horizontalSizeClass == .regular ? 300 : 280), spacing: 16)]
-    }
-
     var body: some View {
         ScrollView {
             if let author = store.author {
@@ -51,7 +47,7 @@ struct ReplayListView: View {
                 }
                 .padding(.horizontal, 16).padding(.top, 8)
             }
-            LazyVGrid(columns: columns, spacing: 18) {
+            ResponsiveMediaGrid(minimumWidth: horizontalSizeClass == .regular ? 300 : 280, spacing: 16) {
                 ForEach(store.shows) { show in
                     if let first = show.videos.first {
                         NavigationLink(value: ReplayRoute(hashID: first.hashID, roomID: store.author?.roomID ?? store.roomID)) {
@@ -151,8 +147,7 @@ struct ReplayView: View {
     @State private var homeTab: AppTab?
     @State private var started = false
 
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @State private var sceneContext = PlayerSceneContext()
     @Environment(\.scenePhase) private var scenePhase
     @Environment(AppSettings.self) private var settings
     @Environment(Router.self) private var router
@@ -164,39 +159,26 @@ struct ReplayView: View {
 
     private var player: ReplayPlayer { session.player }
     private var detail: DouyuReplayDetail? { session.detail }
-    private var isWide: Bool { horizontalSizeClass == .regular }
-    private var isFullscreen: Bool { wantsFullscreen || verticalSizeClass == .compact }
+    private var isFullscreen: Bool { wantsFullscreen }
     private var roomID: String? {
         if let id = detail?.roomID, !id.isEmpty { return id }
         return route.roomID
     }
 
     var body: some View {
-        Group {
-            if isFullscreen {
-                playerSurface(fullscreen: true)
-            } else if isWide {
-                HStack(alignment: .top, spacing: 0) {
-                    VStack(spacing: 0) {
-                        playerSection
-                        infoSection
-                        Spacer(minLength: 0)
-                    }.frame(maxWidth: .infinity)
-                    Divider()
-                    VStack(spacing: 0) {
-                        panelPicker
-                        panelContent
-                    }.frame(width: 340)
-                }
-            } else {
+        AdaptivePlaybackContainer(fullscreen: isFullscreen) {
+            playerSurface(fullscreen: isFullscreen)
+        } companion: {
+            PlaybackCompanion {
+                infoSection
+            } content: {
                 VStack(spacing: 0) {
-                    playerSection
-                    infoSection
                     panelPicker
                     panelContent
                 }
             }
         }
+        .background(PlayerSceneReader(context: sceneContext))
         .navigationTitle(detail?.authorName ?? "录像")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(isFullscreen ? .hidden : .visible, for: .navigationBar, .tabBar)
@@ -251,31 +233,22 @@ struct ReplayView: View {
 
     // MARK: 播放区
 
-    private var playerSection: some View {
-        playerSurface(fullscreen: false)
-            .aspectRatio(Theme.coverAspect, contentMode: .fit)
-            .frame(maxWidth: .infinity)
-            .clipped()
-    }
-
     private func playerSurface(fullscreen: Bool) -> some View {
         @Bindable var player = player
         return ZStack {
-            Color.black.ignoresSafeArea()
+            Color.black
             ReplayVideoView(player: player) { player.preparePiP(automatic: settings.data.autoPictureInPicture) }
-                .ignoresSafeArea(edges: fullscreen ? .all : [])
+                .allowsHitTesting(false)
             if let feed = session.feed {
                 DanmakuOverlay(messages: feed.messages, settings: settings.danmakuSettings,
                                isVisible: session.isDanmakuVisible,
                                clearToken: feed.clearToken, isPaused: !player.isPlaying)
                     .id(session.hashID)
                     .allowsHitTesting(false)
-                    .ignoresSafeArea(edges: fullscreen ? .all : [])
             }
             if fullscreen {
-                PlayerGestureSurface(volume: $player.volume, hud: $hud, isLocked: false,
+                PlayerGestureSurface(volume: $player.volume, hud: $hud, sceneContext: sceneContext, isLocked: false,
                                      onSingleTap: toggleControls, onDoubleTap: { player.togglePlay() })
-                    .ignoresSafeArea()
             } else {
                 Color.clear.contentShape(.rect)
                     .onTapGesture(count: 2) { player.togglePlay() }
@@ -390,8 +363,8 @@ struct ReplayView: View {
                     session.seek(to: target)
                     scheduleHide()
                 }
+                .disabled(session.phase != .loaded)
             }
-            .disabled(session.phase != .loaded)
         }
         .padding(.horizontal, fullscreen ? 20 : 12)
         .padding(.top, fullscreen ? 8 : 10)
@@ -663,6 +636,9 @@ struct ReplayView: View {
         hideTask?.cancel()
         controlsVisible = true
         guard !showingDanmakuSettings else { return }
+        #if DEBUG
+        if UserDefaults.standard.bool(forKey: "keepControls") { return }
+        #endif
         hideTask = Task {
             try? await Task.sleep(for: .seconds(3))
             guard !Task.isCancelled, player.isPlaying else { return }
@@ -671,15 +647,15 @@ struct ReplayView: View {
     }
 
     private func enterFullscreen() {
+        LiveDiagnostics.record("ui.fullscreen", fields: ["page": "replay", "enabled": "true"])
         wantsFullscreen = true
         scheduleHide()
-        SceneBridge.enterLandscape()
     }
 
     private func exitFullscreen() {
+        LiveDiagnostics.record("ui.fullscreen", fields: ["page": "replay", "enabled": "false"])
         wantsFullscreen = false
         hud = nil
         controlsVisible = true
-        SceneBridge.returnToPortrait()
     }
 }
