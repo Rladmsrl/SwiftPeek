@@ -37,6 +37,6 @@ bash scripts/release-macos.sh
 
 Release 共享配置关闭 ENABLE_CODE_COVERAGE；构建时也应显式传入 ENABLE_CODE_COVERAGE=NO，避免本机 scheme 覆盖设置。覆盖率插桩会嵌入源码路径，单独剥离调试符号不足以去除。
 
-若之后公开侧载产物，应从无签名 Release 的设备构建开始，创建只包含 `Payload/SwiftPeek.app` 的 IPA，清理符号路径并检查整个包，不携带维护者的 provisioning profile、签名身份、测试 target 或诊断文件。使用者需要自己的签名和相应安装工具；无签名 IPA 本身不能直接安装。不得为分发提供个人私钥或企业证书。
+0.8.1 已在同一 Release 补充公开无签名 IPA，源码版本和二进制版本保持一致。后续打包应从无签名 Release 的设备构建开始，创建只包含 `Payload/SwiftPeek.app` 的 IPA，清理符号路径并检查整个包，不携带维护者的 provisioning profile、签名身份、测试 target 或诊断文件。使用者需要自己的签名和相应安装工具；无签名 IPA 本身不能直接安装。不得为分发提供个人私钥或企业证书。
 
-实际发布 iOS 之前，还需验证重签后真机安装、启动、网络播放、后台和 PiP；macOS 发布通过不代表 iOS 已完成验收。
+iOS IPA 上传后应下载回验，并将其摘要加入同一版本的 SHA256SUMS.txt。当前 0.8.1 尚未验证重签后的真机安装、启动、网络播放、后台和 PiP，发布说明已明确这一限制；macOS 发布通过不代表 iOS 已完成验收。

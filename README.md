@@ -27,9 +27,20 @@ SwiftPeek 是一个开源的斗鱼第三方客户端，使用 Swift / SwiftUI �
 
 ## 下载与隐私
 
-[GitHub Releases](https://github.com/Rladmsrl/SwiftPeek/releases) 提供 macOS Universal 包（arm64 + x86_64），最低 macOS 26。Intel 版本已交叉编译，尚无 Intel 真机验证；请确认设备与系统兼容。当前包采用 ad-hoc 签名，未做 Developer ID 公证，首次打开可能被 Gatekeeper 阻止。
+当前发布版本为 **[0.8.1 (15)](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.1)**，macOS 与 iOS 版本一致。
 
-0.8.0 起，关注分享默认不包含历史，本地诊断默认关闭，设置可清理观看记录与日志。阅读[隐私说明](PRIVACY.md)和[发布流程](docs/releases.md)。iOS 暂不提供维护者个人签名的 IPA，源码与 macOS 使用相同版本号。
+| 平台 | 下载 | 系统与安装要求 |
+| --- | --- | --- |
+| macOS | [Universal ZIP](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.1/SwiftPeek-0.8.1-macOS-universal.zip) | macOS 26+；包含 arm64 与 x86_64，解压后将 App 拖入“应用程序” |
+| iPhone / iPad | [无签名 IPA](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.1/SwiftPeek-0.8.1-iOS-unsigned.ipa) | iOS / iPadOS 26+、arm64；需要使用自己的签名身份重签后侧载，不能直接安装 |
+
+[对应源码](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.1/SwiftPeek-0.8.1-source.zip) · [SHA-256 校验文件](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.1/SHA256SUMS.txt)
+
+macOS 包采用 ad-hoc 签名，未做 Developer ID 公证，首次打开可能被 Gatekeeper 阻止。核对来源和校验值后，可按系统提示在“系统设置 → 隐私与安全性”允许该应用。Intel 版本已交叉编译，尚无 Intel 或 macOS 26 真机验证。
+
+iOS IPA 不包含维护者个人签名身份或 provisioning profile；已完成设备 Release 编译和包内隐私检查，但尚未验证这份 IPA 重签后的真机安装、启动和播放。
+
+0.8.0 起，关注分享默认不包含历史，本地诊断默认关闭，设置可清理观看记录与日志。应用仍直接访问斗鱼及 CDN，不提供匿名代理。阅读[隐私说明](PRIVACY.md)、[iOS 安装说明](ios_native/README.md#下载与侧载)和[发布流程](docs/releases.md)。
 
 ## iPhone Duo 兼容
 
@@ -40,6 +51,7 @@ SwiftPeek 已适配 iPhone Duo，让斗鱼直播、录像回放和弹幕随折�
 - **小窗弹幕**：直播与录像共用独立合成队列，采用 CPU/vImage 绘制，优化切到后台后的弹幕流畅度。
 
 已完成 iPhone Duo / iOS 27.1 模拟器的姿态与交互验证，并由维护者在 iOS 27.2 真机安装自测后确认可用。
+上述记录属于此前开发版本，不代表当前公开 IPA 已通过重签安装验证。
 实际小窗显示帧率随设备与负载变化，不将目标 60 fps 等同于真机恒定帧率。
 详见 [iPhone Duo 适配与验证](docs/iphone-duo.md) 和 [小窗弹幕性能优化](docs/pip-danmaku-performance.md)。
 
@@ -105,7 +117,7 @@ AI 章节由斗鱼为部分录像提供，包含事件标题与摘要，并非�
 - **缓冲与后台换流**：目标约 4 秒内存缓冲，提前准备新凭据与连接，在新流就绪后交接。
 - **弹幕**：滚动弹幕与列表，支持字体、字号、速度、透明度、显示区域和屏蔽词，也可在画中画里显示弹幕。
 - **录像回放**：按场次浏览主播录像，弹幕按原时间轴重放；进度条带弹幕热度与 AI 章节，记住观看进度。[说明](docs/replay.md)
-- **关注与历史**：本地保存；分享关注文件（含观看历史），通过隔空投送在 Mac 和 iPhone 间手动合并。
+- **关注与历史**：本地保存；分享关注文件（观看历史需主动勾选），通过隔空投送在 Mac 和 iPhone 间手动合并。
 - **iPhone Duo 兼容**：折叠屏内外屏、横竖屏、半折叠姿态与自适应布局，保持直播与录像会话连续。
 - **原生体验**：SwiftUI 界面、Liquid Glass 控件、深浅色外观，以及各平台适合的窗口和交互。
 
@@ -179,7 +191,7 @@ xcodebuild -project ios_native/SimpleLive.xcodeproj \
   -scheme SimpleLive -configuration Release \
   -destination 'generic/platform=iOS' \
   -derivedDataPath ios_native/build \
-  CODE_SIGNING_ALLOWED=NO build
+  CODE_SIGNING_ALLOWED=NO ENABLE_CODE_COVERAGE=NO build
 ```
 
 无签名产物不能直接安装到 iPhone。平台说明见 [iOS](ios_native/README.md) 与 [macOS](macos_native/README.md)。

@@ -27,6 +27,23 @@ Replay timelines show chat density and AI chapter summaries to help you jump to 
 The `reference/` directory is excluded from native builds and marked as vendored code in `.gitattributes`, so it does not count toward GitHub's language statistics.
 The project is still evolving. Feedback from actual playback, background transitions, and cross-device sharing is welcome.
 
+## Downloads and privacy
+
+The current release is **[0.8.1 (15)](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.1)** for both platforms.
+
+| Platform | Download | Requirements and installation |
+| --- | --- | --- |
+| macOS | [Universal ZIP](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.1/SwiftPeek-0.8.1-macOS-universal.zip) | macOS 26+; arm64 and x86_64; extract and move the app to Applications |
+| iPhone / iPad | [Unsigned IPA](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.1/SwiftPeek-0.8.1-iOS-unsigned.ipa) | iOS / iPadOS 26+, arm64; sign with your own identity before sideloading; cannot be installed directly |
+
+[Matching source](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.1/SwiftPeek-0.8.1-source.zip) · [SHA-256 checksums](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.1/SHA256SUMS.txt)
+
+The Mac app is ad-hoc signed and has not been notarized with Developer ID. Gatekeeper may block the first launch; after checking the source and checksum, follow the system prompts in System Settings → Privacy & Security to allow this app. The Intel slice is cross-compiled; it has not been tested on Intel hardware or a Mac running macOS 26.
+
+The iOS IPA contains no maintainer signing identity or provisioning profile. Device Release compilation and package privacy checks passed, but installation, launch, and playback after re-signing this IPA have not been verified on a physical device.
+
+Starting with 0.8.0, follow sharing excludes watch history by default, local diagnostics are opt-in, and settings can clear viewing records and logs. The app connects directly to Douyu and its CDNs; it is not an anonymity proxy. See [privacy details](PRIVACY.md), [iOS installation notes](ios_native/README.md#下载与侧载), and [release instructions](docs/releases.md) in Chinese.
+
 ## iPhone Duo support
 
 SwiftPeek adapts Douyu live streams, replays, and danmaku to the space available on iPhone Duo:
@@ -35,6 +52,7 @@ SwiftPeek adapts Douyu live streams, replays, and danmaku to the space available
 - **Portrait, landscape, and partial folds:** video, recommendation cards, and controls avoid the fold; native navigation adapts across displays, and exiting fullscreen keeps the current pose.
 - **PiP danmaku:** live streams and replays share an independent composition queue with CPU/vImage drawing to improve background chat animation.
 
+The following checks concern earlier development builds, not re-signing or installation of the current public IPA.
 Pose and interaction checks were completed on the iPhone Duo / iOS 27.1 Simulator. The maintainer also installed and tried the build on an iOS 27.2 device and confirmed it was usable.
 Actual PiP display rates depend on the device and load; a 60 fps scheduling target is not a claim of a constant measured device frame rate.
 See [Duo compatibility and validation](docs/iphone-duo.md) and [PiP danmaku performance](docs/pip-danmaku-performance.md) (Chinese).
@@ -101,7 +119,7 @@ See [capture notes](docs/screenshots/README.md).
 - **Buffering and background handoff:** approximately four seconds of in-memory media buffering, with fresh credentials and a replacement connection prepared before handoff.
 - **Danmaku and live chat:** scrolling chat overlays and a chat list, with font selection, size, speed, opacity, display area, and keyword filters; optional chat overlays in Picture in Picture.
 - **Replays:** browse a creator's past broadcasts by session and watch them with chat replayed on its original timeline; the scrubber shows chat density and AI chapters, and playback resumes where you left off. [Details (Chinese)](docs/replay.md)
-- **Follows and history:** local storage, plus follow-list files (including watch history) that can be shared through AirDrop and manually merged between Mac and iPhone.
+- **Follows and history:** local storage, plus follow-list files (watch history is included only when explicitly selected) that can be shared through AirDrop and manually merged between Mac and iPhone.
 - **iPhone Duo compatibility:** adaptive inner and outer displays, portrait, landscape, and partial folds, with playback sessions preserved across changes.
 - **Native interfaces:** SwiftUI, Liquid Glass controls, light and dark appearances, and platform-appropriate window and input behavior.
 
@@ -178,7 +196,7 @@ xcodebuild -project ios_native/SimpleLive.xcodeproj \
   -scheme SimpleLive -configuration Release \
   -destination 'generic/platform=iOS' \
   -derivedDataPath ios_native/build \
-  CODE_SIGNING_ALLOWED=NO build
+  CODE_SIGNING_ALLOWED=NO ENABLE_CODE_COVERAGE=NO build
 ```
 
 An unsigned build cannot be installed directly on an iPhone. Additional platform notes are available for [iOS](ios_native/README.md) and [macOS](macos_native/README.md) in Chinese.
@@ -257,9 +275,3 @@ and all upstream contributors. Thanks also to CryptoJS, Tars, the other open-sou
 Thank you to the **[LINUX DO](https://linux.do/) community** for its discussions and sharing.
 
 **Standing on the shoulders of giants and AI, to make watching live streams a little simpler.**
-
-## Downloads and privacy
-
-[GitHub Releases](https://github.com/Rladmsrl/SwiftPeek/releases) provides a macOS Universal archive (arm64 + x86_64), requiring macOS 26. The Intel slice is cross-compiled and has not been tested on Intel hardware. Releases are ad-hoc signed, not Developer ID notarized; Gatekeeper may block the first launch.
-
-Starting with 0.8.0, follow sharing excludes watch history by default, local diagnostics are opt-in, and settings can clear viewing records and logs. See [privacy details](PRIVACY.md) and [release instructions](docs/releases.md). Both platforms share one version; personal signing profiles are never distributed in public iOS downloads.

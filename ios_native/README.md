@@ -5,6 +5,16 @@
 已兼容 iPhone Duo 折叠屏，覆盖内外屏、横竖屏和半折叠姿态。
 项目来源、AI 协作说明和许可证见 [项目首页](../README.md) 与 [来源与致谢](../THIRD_PARTY_NOTICES.md)。
 
+## 下载与侧载
+
+当前版本 **0.8.1 (15)**：[下载无签名 IPA](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.1/SwiftPeek-0.8.1-iOS-unsigned.ipa)，支持 iOS / iPadOS 26+、arm64。对应源码和 SHA-256 校验文件见[发布页](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.1)。
+
+1. 下载 IPA，并核对发布页的 SHA-256 校验值。
+2. 使用自己的有效签名身份及适用的侧载工具，对整个 App 重新签名并安装；也可以按下文从源码构建到自己的设备。
+3. 无签名 IPA 不能直接安装。请自行保管账号、证书私钥和设备信息，不要上传到公开 Issues。
+
+公开 IPA 不携带维护者个人签名身份或 provisioning profile。设备 Release 编译和包内隐私检查已通过，尚未验证这份公开 IPA 重签后的真机安装、启动、播放和画中画；此前开发版本的真机记录不替代该验证。数据处理方式见[隐私说明](../PRIVACY.md)。
+
 ## 环境与构建
 
 - iOS / iPadOS 26 或更新版本。

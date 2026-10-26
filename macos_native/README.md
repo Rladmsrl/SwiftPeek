@@ -3,18 +3,24 @@
 原生 SwiftUI / AppKit 客户端。使用 macOS 27 SDK 构建，最低系统版本为 macOS 26（0.8.1 起）。
 取流、签名、弹幕协议、关注与历史、FLV 解复用与硬件渲染复用 iOS 实现。
 
+## 下载与安装
+
+当前版本 **0.8.1 (15)**：[下载 Universal ZIP](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.1/SwiftPeek-0.8.1-macOS-universal.zip)，解压后将 SwiftPeek.app 拖入“应用程序”。同一包包含 Apple Silicon arm64 和 Intel x86_64，最低 macOS 26。Intel 与 macOS 26 真机播放尚未验证。
+
+包采用 ad-hoc 签名，未做 Developer ID 公证。核对[发布页](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.1)的来源与 SHA-256 后，如被系统阻止，可按提示在“系统设置 → 隐私与安全性”允许该应用。包内隐私检查通过不代表完整安全保证，详见[隐私说明](../PRIVACY.md)。
+
 ## 打开与构建
 
 运行构建脚本后，App 位于 `build/Build/Products/Release/SwiftPeek.app`，双击打开。
 如果正在使用之前的 Debug 版本，请自行退出旧版后打开这个 Release 版本。
 
 ```sh
-# 仓库根目录；需要 Xcode 27 和 xcodegen
+# 仓库根目录；需要 Xcode 27.1 和 xcodegen
 ./macos_native/build.sh
 ```
 
 脚本只构建，不启动 App、不操作桌面。工程由 `project.yml` 生成。
-当前使用本机 ad-hoc 签名，可在本机使用；未进行 Developer ID 公证或分发发布。
+本命令生成本机构建产物，采用 ad-hoc 签名。公开发布使用独立的清理、打包与审计流程，见[发布流程](../docs/releases.md)。
 
 ## 0.5.0：SwiftPeek
 
