@@ -6,7 +6,7 @@ products_dir="${1:-$repo_dir/macos_native/build/Build/Products/Release}"
 check_dir="$(mktemp -d -t simplelive-follow-check)"
 trap 'rm -rf "$check_dir"' EXIT
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
-xcrun swiftc -swift-version 5 -target "$(uname -m)-apple-macos27.0" \
+xcrun swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
   -I "$products_dir" "$products_dir/SimpleLiveKit.o" \
   "$repo_dir/ios_native/App/Player/PlaybackStreamSelection.swift" \
   "$repo_dir/ios_native/App/Support/Stores.swift" \

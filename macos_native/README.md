@@ -1,6 +1,6 @@
-# SwiftPeek · macOS 27
+# SwiftPeek · macOS 26+
 
-原生 SwiftUI / AppKit 客户端。使用 macOS 27 SDK 构建，最低系统版本为 macOS 27。
+原生 SwiftUI / AppKit 客户端。使用 macOS 27 SDK 构建，最低系统版本为 macOS 26（0.8.1 起）。
 取流、签名、弹幕协议、关注与历史、FLV 解复用与硬件渲染复用 iOS 实现。
 
 ## 打开与构建

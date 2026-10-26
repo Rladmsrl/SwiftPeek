@@ -6,7 +6,7 @@
 
 <p align="center"><strong>Mac、iPhone（含 iPhone Duo）与 iPad 上的原生斗鱼直播与录像客户端</strong></p>
 <p align="center">Just live. Natively. · 同步弹幕 · 画中画 · 弹幕热度时间轴 · AI 章节摘要</p>
-<p align="center">Swift · SwiftUI · iOS 26+ · macOS 27+ · GPL-3.0</p>
+<p align="center">Swift · SwiftUI · iOS 26+ · macOS 26+ · GPL-3.0</p>
 
 <p align="center">简体中文 · <a href="README.en.md">English</a></p>
 
@@ -27,7 +27,7 @@ SwiftPeek 是一个开源的斗鱼第三方客户端，使用 Swift / SwiftUI �
 
 ## 下载与隐私
 
-[GitHub Releases](https://github.com/Rladmsrl/SwiftPeek/releases) 提供 macOS Universal 包（arm64 + x86_64），最低 macOS 27。Intel 版本已交叉编译，尚无 Intel 真机验证；请确认设备与系统兼容。当前包采用 ad-hoc 签名，未做 Developer ID 公证，首次打开可能被 Gatekeeper 阻止。
+[GitHub Releases](https://github.com/Rladmsrl/SwiftPeek/releases) 提供 macOS Universal 包（arm64 + x86_64），最低 macOS 26。Intel 版本已交叉编译，尚无 Intel 真机验证；请确认设备与系统兼容。当前包采用 ad-hoc 签名，未做 Developer ID 公证，首次打开可能被 Gatekeeper 阻止。
 
 0.8.0 起，关注分享默认不包含历史，本地诊断默认关闭，设置可清理观看记录与日志。阅读[隐私说明](PRIVACY.md)和[发布流程](docs/releases.md)。iOS 暂不提供维护者个人签名的 IPA，源码与 macOS 使用相同版本号。
 
@@ -146,7 +146,7 @@ AI 是实际参与开发的协作者。包括 Codex 在内的工具参与了方�
 
 ### 环境
 
-- macOS 开发环境；iOS / iPhone Duo 构建使用 Xcode 27.1 或更新版本及 iOS 27.1+ SDK，部署目标仍为 iOS 26。macOS 端使用 macOS 27+ SDK。
+- macOS 开发环境；iOS / iPhone Duo 构建使用 Xcode 27.1 或更新版本及 iOS 27.1+ SDK，部署目标仍为 iOS 26。macOS 端使用 macOS 27+ SDK，部署目标为 macOS 26。
 - Swift 6.2 或更新工具链；当前源码使用 Swift 5 语言模式。
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen)，用于从 `project.yml` 生成 Xcode 工程。
 

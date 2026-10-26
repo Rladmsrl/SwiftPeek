@@ -87,7 +87,7 @@ struct MacSettingsView: View {
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 5) {
                         Text("SwiftPeek").font(.system(size: 15, weight: .semibold, design: .rounded))
-                        Text("macOS 27 · 原生直播客户端 · \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")")
+                        Text("macOS 26 · 原生直播客户端 · \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")")
                             .font(.system(size: 11)).foregroundStyle(.secondary)
                     }
                 }.padding(.vertical, 8)

@@ -29,7 +29,7 @@ xcodebuild -project ios_native/SimpleLive.xcodeproj \
   -scheme SimpleLive -configuration Release \
   -destination 'generic/platform=iOS' \
   -derivedDataPath ios_native/build \
-  CODE_SIGNING_ALLOWED=NO build
+  CODE_SIGNING_ALLOWED=NO ENABLE_CODE_COVERAGE=NO build
 ```
 
 产物位于 `build/Build/Products/Release-iphoneos/SwiftPeek.app`。无签名产物不能直接安装到手机。

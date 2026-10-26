@@ -2,10 +2,10 @@
 
 ## 版本
 
-两端只从 `shared/version.yml` 读取版本。当前 0.8.0 (14)。每次发布递增版本和 build：
+两端只从 `shared/version.yml` 读取版本。当前 0.8.1 (15)。每次发布递增版本和 build：
 
 ```sh
-python3 scripts/bump-version.py          # 0.8.0 -> 0.8.1，同时 build +1
+python3 scripts/bump-version.py          # 0.8.1 -> 0.8.2，同时 build +1
 python3 scripts/bump-version.py 0.9.0    # 显式指定更高版本
 ```
 
@@ -25,7 +25,7 @@ bash scripts/release-macos.sh
 
 只上传 `SwiftPeek-<version>-macOS-universal.zip`、`SwiftPeek-<version>-source.zip` 和 `SHA256SUMS.txt`，并将 release tag 指向生成源码包的同一个提交。
 
-最低系统为 macOS 27。x86_64 交叉编译成功不能代替 Intel 真机兼容性、图形及播放验证。不要把下载名称写成“适用于所有 Intel Mac”。
+最低系统为 macOS 26。x86_64 交叉编译成功不能代替 Intel 真机兼容性、图形及播放验证。不要把下载名称写成“适用于所有 Intel Mac”。
 
 当前采用不包含开发者身份的 ad-hoc 签名，未做 Developer ID 公证。Gatekeeper 可能阻止运行；核对仓库来源和 SHA-256 后，可按系统提示在“系统设置 → 隐私与安全性”允许该应用。不要要求用户全局关闭 Gatekeeper。将来若改用 Developer ID，必须先明确证书身份会向下载者公开，并调整审计规则。
 
@@ -34,6 +34,8 @@ bash scripts/release-macos.sh
 两端使用同一版本与源码，但本流程不会公开个人签名 IPA。个人签名会把团队、证书以及可能的注册设备信息写入产物。
 
 自用：从源码生成工程，由安装者在本机选择自己的开发团队构建。团队覆盖配置仅存在忽略的 `*.local.xcconfig` 或本机 Xcode 工程中。
+
+Release 共享配置关闭 ENABLE_CODE_COVERAGE；构建时也应显式传入 ENABLE_CODE_COVERAGE=NO，避免本机 scheme 覆盖设置。覆盖率插桩会嵌入源码路径，单独剥离调试符号不足以去除。
 
 若之后公开侧载产物，应从无签名 Release 的设备构建开始，创建只包含 `Payload/SwiftPeek.app` 的 IPA，清理符号路径并检查整个包，不携带维护者的 provisioning profile、签名身份、测试 target 或诊断文件。使用者需要自己的签名和相应安装工具；无签名 IPA 本身不能直接安装。不得为分发提供个人私钥或企业证书。
 

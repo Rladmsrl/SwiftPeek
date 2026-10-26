@@ -6,7 +6,7 @@
 
 <p align="center"><strong>Native Douyu live streaming &amp; replay player for Mac, iPhone Duo, iPhone, and iPad</strong></p>
 <p align="center">Just live. Natively. · Danmaku · Picture in Picture · Chat density timeline · AI chapters</p>
-<p align="center">Swift · SwiftUI · iOS 26+ · macOS 27+ · GPL-3.0</p>
+<p align="center">Swift · SwiftUI · iOS 26+ · macOS 26+ · GPL-3.0</p>
 
 <p align="center"><a href="README.md">简体中文</a> · English</p>
 
@@ -145,7 +145,7 @@ An AI assessment or a passing build is not a substitute for complete testing.
 
 ### Requirements
 
-- A macOS development environment. Build iOS / iPhone Duo with Xcode 27.1 or newer and the iOS 27.1+ SDK; the deployment target remains iOS 26. The Mac app requires the macOS 27+ SDK.
+- A macOS development environment. Build iOS / iPhone Duo with Xcode 27.1 or newer and the iOS 27.1+ SDK; the deployment target remains iOS 26. The Mac build uses the macOS 27+ SDK and targets macOS 26 or later.
 - Swift 6.2 or newer; the current source uses Swift 5 language mode.
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen), which generates the Xcode projects from `project.yml`.
 
@@ -260,6 +260,6 @@ Thank you to the **[LINUX DO](https://linux.do/) community** for its discussions
 
 ## Downloads and privacy
 
-[GitHub Releases](https://github.com/Rladmsrl/SwiftPeek/releases) provides a macOS Universal archive (arm64 + x86_64), requiring macOS 27. The Intel slice is cross-compiled and has not been tested on Intel hardware. Releases are ad-hoc signed, not Developer ID notarized; Gatekeeper may block the first launch.
+[GitHub Releases](https://github.com/Rladmsrl/SwiftPeek/releases) provides a macOS Universal archive (arm64 + x86_64), requiring macOS 26. The Intel slice is cross-compiled and has not been tested on Intel hardware. Releases are ad-hoc signed, not Developer ID notarized; Gatekeeper may block the first launch.
 
 Starting with 0.8.0, follow sharing excludes watch history by default, local diagnostics are opt-in, and settings can clear viewing records and logs. See [privacy details](PRIVACY.md) and [release instructions](docs/releases.md). Both platforms share one version; personal signing profiles are never distributed in public iOS downloads.

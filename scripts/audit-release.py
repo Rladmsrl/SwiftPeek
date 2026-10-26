@@ -10,12 +10,15 @@ parser = argparse.ArgumentParser()
 parser.add_argument("app", type=Path)
 parser.add_argument("--version", required=True)
 parser.add_argument("--build", required=True)
+parser.add_argument("--minimum-system", default="26.0")
 args = parser.parse_args()
 app = args.app
 info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
 failures = []
 if info.get("CFBundleShortVersionString") != args.version or info.get("CFBundleVersion") != args.build:
     failures.append("bundle version mismatch")
+if info.get("LSMinimumSystemVersion") != args.minimum_system:
+    failures.append("minimum macOS mismatch")
 patterns = {
     "local home path": rb"/(?:Users|home)/[A-Za-z0-9_.-]+/",
     "private key": rb"BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY",
@@ -41,6 +44,10 @@ exe = app / "Contents/MacOS" / info["CFBundleExecutable"]
 architectures = subprocess.check_output(["lipo", "-archs", str(exe)], text=True).strip().split()
 if set(architectures) != {"arm64", "x86_64"}:
     failures.append("expected both arm64 and x86_64")
+load_commands = subprocess.check_output(["otool", "-l", str(exe)], text=True)
+minimums = re.findall(r"\bminos\s+([0-9.]+)", load_commands)
+if len(minimums) != 2 or any(value != args.minimum_system for value in minimums):
+    failures.append("architecture deployment target mismatch")
 signature = subprocess.run(["codesign", "-dvv", str(app)], capture_output=True, text=True)
 details = signature.stdout + signature.stderr
 if "Signature=adhoc" not in details or "Authority=" in details or re.search(r"TeamIdentifier=(?!not set)[^\n]+", details):
@@ -50,4 +57,4 @@ if verify.returncode:
     failures.append("invalid code signature")
 if failures:
     raise SystemExit("FAIL: " + "; ".join(sorted(set(failures))))
-print(f"PASS: {args.version} ({args.build}); arm64 + x86_64; ad-hoc signature; no scanned private artifacts; licenses included")
+print(f"PASS: {args.version} ({args.build}); macOS {args.minimum_system}+; arm64 + x86_64; ad-hoc signature; no scanned private artifacts; licenses included")

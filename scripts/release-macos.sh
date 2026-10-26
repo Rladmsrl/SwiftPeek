@@ -22,7 +22,7 @@ mkdir -p "$release_dir/staging"
 xcodegen generate --spec macos_native/project.yml > "$release_dir/generate.log" 2>&1
 xcodebuild -project macos_native/SimpleLiveMac.xcodeproj -scheme SimpleLiveMac \
   -configuration Release -destination 'generic/platform=macOS' \
-  -derivedDataPath macos_native/build ARCHS='arm64 x86_64' ONLY_ACTIVE_ARCH=NO \
+  -derivedDataPath macos_native/build ARCHS='arm64 x86_64' ONLY_ACTIVE_ARCH=NO ENABLE_CODE_COVERAGE=NO \
   build > "$release_dir/build.log" 2>&1
 app="$release_dir/staging/SwiftPeek.app"
 ditto --noextattr --norsrc macos_native/build/Build/Products/Release/SwiftPeek.app "$app"
