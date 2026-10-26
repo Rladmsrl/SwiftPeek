@@ -219,6 +219,8 @@ final class RoomStore {
 
     var qualities: [LivePlayQuality] = []
     var selectedQualityIndex = 0
+    var qualityPreferenceOverride: QualityPreference?
+    var remembersQuality = true
     var playURL: LivePlayURL?
     var currentLineIndex = 0
 
@@ -250,6 +252,21 @@ final class RoomStore {
     private var pendingMessages: [LiveMessage] = []
     private var flushTask: Task<Void, Never>?
     private var flushGeneration = 0
+    private(set) var danmakuDeliveryEnabled = true
+
+    /// A hidden multi-watch room keeps its socket but does not accumulate or
+    /// publish message batches. Selection can resume immediately without a login.
+    func setDanmakuDeliveryEnabled(_ enabled: Bool) {
+        guard danmakuDeliveryEnabled != enabled else { return }
+        danmakuDeliveryEnabled = enabled
+        if !enabled {
+            flushGeneration += 1
+            flushTask?.cancel()
+            flushTask = nil
+            pendingMessages.removeAll()
+            messages.removeAll()
+        }
+    }
 
     /// 防止 `.task` 重跑时并发进入 load()
     private var isLoading = false
@@ -322,6 +339,9 @@ final class RoomStore {
     }
 
     private func preferredQualityIndex(for qualities: [LivePlayQuality]) -> Int {
+        if let preference = qualityPreferenceOverride {
+            return preference.index(in: qualities.count, lastQualityName: nil, names: qualities.map(\.quality))
+        }
         guard let settings, !qualities.isEmpty else { return 0 }
         let index = settings.data.qualityPreference.index(
             in: qualities.count,
@@ -355,7 +375,7 @@ final class RoomStore {
             currentLineIndex = fresh.index(forLineID: previousLine)
             lastStreamChangeWasReconnect = false
             playURL = fresh
-            settings?.data.lastQualityName = quality.quality
+            if remembersQuality { settings?.data.lastQualityName = quality.quality }
             danmakuNotice = nil
             offlineNotice = nil
             return true
@@ -473,6 +493,7 @@ final class RoomStore {
                     case .ready:
                         self.danmakuNotice = nil
                     case .message(let message):
+                        guard self.danmakuDeliveryEnabled else { continue }
                         // 屏蔽词在入口处过滤一次，飞幕和列表同时生效
                         self.enqueueDanmaku(message)
                     case .notice(let text):

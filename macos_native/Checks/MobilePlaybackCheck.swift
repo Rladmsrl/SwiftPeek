@@ -60,6 +60,7 @@ private actor FakeSite: LiveSite {
 @MainActor
 private final class FakeMobilePlayer: MobilePlaybackEngine {
     var isActive = false
+    var isMuted = false
     var volume = 1.0
     var onPrepareStream: (@MainActor (Bool) async throws -> PreparedPlaybackStream)?
     var onCommitStream: (@MainActor (PreparedPlaybackStream) -> Void)?
@@ -173,6 +174,169 @@ struct MobilePlaybackCheck {
         precondition(pausedSession.store.currentStreamURL != nil && pausedPlayer.starts == 0 && !pausedSession.isWorking)
         pausedSession.close()
         print("PASS: backgrounding an autoplay-off room does not strand its metadata load")
+        try await checkMultiWatch()
+    }
+
+    @MainActor private static func checkMultiWatch() async throws {
+        let fixtureSite = FakeSite()
+        let settings = AppSettings()
+        let originalSettings = settings.data
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let library = LibraryStore(storageDirectory: directory)
+        let multi = MultiWatchSession(makePlayer: { FakeMobilePlayer() }, site: fixtureSite)
+        multi.configure(settings: settings, library: library)
+        for id in ["1", "2", "3", "4"] { precondition(multi.add(id: id, title: id)) }
+        precondition(!multi.add(id: "5", title: "fifth"))
+        precondition(multi.rooms.allSatisfy { $0.playback.player.starts == 0 }, "Selection must not start streams")
+        let identities = multi.rooms.map { ObjectIdentifier($0.playback.player) }
+        precondition(multi.add(id: "1", title: "duplicate") && multi.rooms.count == 4)
+        multi.start()
+        try await Task.sleep(for: .milliseconds(1400))
+        for room in multi.rooms { await room.playback.waitUntilLoaded() }
+        precondition(multi.rooms.allSatisfy { $0.playback.player.isActive })
+        precondition(multi.rooms.filter { !$0.playback.player.isMuted }.map(\.id) == ["1"])
+        multi.toggleSound("1")
+        precondition(multi.rooms.allSatisfy { $0.playback.player.isMuted })
+        multi.select("1")
+        precondition(multi.rooms.allSatisfy { $0.playback.player.isMuted }, "Selecting the current tile undid its quick mute")
+        multi.toggleSound("4")
+        precondition(multi.selectedID == "1" && multi.rooms.filter { !$0.playback.player.isMuted }.map(\.id) == ["4"])
+        multi.toggleSound("1")
+        precondition(multi.rooms[0].playback.store.selectedQualityIndex == 1)
+        precondition(multi.rooms.dropFirst().allSatisfy { $0.playback.store.selectedQualityIndex == 2 })
+        let starts = multi.rooms.map { $0.playback.player.starts }
+        multi.layoutMode = .stage
+        multi.move("1", to: "4")
+        multi.move("1", to: "4")
+        precondition(multi.rooms.map { ObjectIdentifier($0.playback.player) } == identities)
+        precondition(multi.rooms.map { $0.playback.player.starts } == starts)
+        multi.select("2")
+        precondition(multi.rooms.filter { !$0.playback.player.isMuted }.map(\.id) == ["2"])
+        multi.audioLocked = true
+        multi.select("3")
+        precondition(multi.audibleID == "2" && multi.selectedID == "3")
+        multi.muted = true
+        precondition(multi.rooms.allSatisfy { $0.playback.player.isMuted })
+        multi.audioLocked = false
+        multi.select("3")
+        multi.muted = false
+        multi.focused = true
+        precondition(multi.rooms.filter { $0.playback.player.isActive }.map(\.id) == ["3"])
+        multi.focused = false
+        for room in multi.rooms { await room.playback.waitUntilLoaded() }
+        precondition(multi.rooms.allSatisfy { $0.playback.player.isActive })
+        multi.rooms[0].playback.stopPlayback()
+        multi.focused = true
+        multi.focused = false
+        for room in multi.rooms { await room.playback.waitUntilLoaded() }
+        precondition(!multi.rooms[0].playback.player.isActive, "User-paused tile resumed on layout change")
+        multi.setPiP("3")
+        multi.setBackgrounded(true)
+        precondition(multi.rooms.filter { $0.playback.player.isActive }.map(\.id) == ["3"])
+        multi.setBackgrounded(false)
+        multi.setPiP(nil)
+        for room in multi.rooms { await room.playback.waitUntilLoaded() }
+        multi.remove("3")
+        precondition(multi.rooms.count == 3 && multi.audibleID == multi.selectedID)
+        precondition(multi.rooms.filter { !$0.playback.player.isMuted }.count == 1)
+        let players = multi.rooms.map { $0.playback.player }
+        multi.finish()
+        try await Task.sleep(for: .milliseconds(1000))
+        precondition(players.allSatisfy { !$0.isActive && $0.onPrepareStream == nil })
+        precondition(settings.data == originalSettings, "Multi-watch overwrote global quality/volume preferences")
+        print("PASS: four independent streams, exclusive audio, lock/mute, stable layouts, focus/background suspension and cleanup")
+
+        let originalPlayer = FakeMobilePlayer()
+        let original = MobileRoomPlaybackSession(roomID: "original", player: originalPlayer, site: fixtureSite)
+        original.open(settings: settings, library: library, autoPlay: true)
+        await original.waitUntilLoaded()
+        let originalStarts = originalPlayer.starts
+        let originalStops = originalPlayer.stops
+        let originalQuality = original.store.selectedQualityIndex
+        multi.begin(from: original, id: "original", title: "Original")
+        precondition(multi.owns(original) && multi.rooms[0].playback === original)
+        multi.add(id: "extra", title: "Extra")
+        try await Task.sleep(for: .milliseconds(1100))
+        await multi.rooms[1].playback.waitUntilLoaded()
+        precondition(originalPlayer.isActive && originalPlayer.starts == originalStarts && originalPlayer.stops == originalStops,
+                     "Adding a room interrupted the existing stream")
+        precondition(original.store.selectedQualityIndex == originalQuality, "Entry changed original quality")
+        let extra = multi.rooms[1].playback.player
+        multi.finish()
+        precondition(!extra.isActive && originalPlayer.isActive && !multi.owns(original))
+        precondition(originalPlayer.starts == originalStarts && originalPlayer.stops == originalStops,
+                     "Returning to the original player reconnected it")
+        precondition(original.store.remembersQuality && original.store.qualityPreferenceOverride == nil)
+
+        original.stopPlayback()
+        multi.begin(from: original, id: "original", title: "Original")
+        multi.finish()
+        precondition(!originalPlayer.isActive, "Entry resumed a manually paused original room")
+        original.play()
+        await original.waitUntilLoaded()
+        multi.begin(from: original, id: "original", title: "Original")
+        multi.add(id: "extra", title: "Extra")
+        multi.remove("original")
+        multi.finish()
+        precondition(!originalPlayer.isActive, "Removing the original room resumed it on return")
+        original.play()
+        await original.waitUntilLoaded()
+        multi.begin(from: original, id: "original", title: "Original")
+        multi.finish(stopOrigin: true)
+        precondition(!originalPlayer.isActive, "End-all left the original stream running")
+        original.close()
+        print("PASS: player entry/return reuse the original session without reconnects; pause/remove/end-all intent survives")
+
+        // Cancel an initial pending stream before its response arrives, then resume.
+        let slowSite = FakeSite()
+        await slowSite.configure(hold: true)
+        let slow = MobileRoomPlaybackSession(roomID: "slow", player: FakeMobilePlayer(), site: slowSite)
+        slow.activate(autoPlay: true)
+        try await waitForPending(slowSite)
+        slow.setSuspended(true)
+        await slowSite.finishPending(at: 0, line: "stale")
+        try await settle()
+        precondition(!slow.player.isActive)
+        await slowSite.configure()
+        slow.setSuspended(false)
+        await slow.waitUntilLoaded()
+        precondition(slow.player.isActive, "Suspended initial load did not resume")
+        slow.close()
+        print("PASS: suspended in-flight loads cannot start late and resume with fresh credentials")
+
+        let backgroundSite = FakeSite()
+        await backgroundSite.configure(hold: true)
+        let backgroundLoad = MobileRoomPlaybackSession(roomID: "background-load", player: FakeMobilePlayer(), site: backgroundSite, backgroundGrace: .milliseconds(100))
+        backgroundLoad.activate(autoPlay: true)
+        try await waitForPending(backgroundSite)
+        backgroundLoad.setBackgroundAudio(false)
+        backgroundLoad.setSceneBackgrounded(true)
+        await backgroundSite.finishPending(at: 0, line: "loaded-in-background")
+        await backgroundLoad.waitUntilLoaded()
+        try await Task.sleep(for: .milliseconds(150))
+        precondition(!backgroundLoad.player.isActive)
+        await backgroundSite.configure()
+        backgroundLoad.setSceneBackgrounded(false)
+        await backgroundLoad.waitUntilLoaded()
+        precondition(backgroundLoad.player.isActive, "Fast background load lost playback intent")
+        backgroundLoad.close()
+        print("PASS: initial load finishing inside the PiP grace period resumes on foreground")
+
+        var activations = 0, deactivations = 0
+        var sampleRates: [Double] = []
+        let audio = PlaybackAudioSession(activate: { activations += 1 }, deactivate: { deactivations += 1 }, setSampleRate: { sampleRates.append($0) })
+        let a = UUID(), b = UUID()
+        audio.acquire(a); audio.acquire(a)
+        audio.preferSampleRate(44100, owner: a)
+        audio.acquire(b)
+        audio.preferSampleRate(48000, owner: b)
+        precondition(sampleRates == [44100], "Second stream changed shared hardware sample rate")
+        audio.release(a); audio.release(a); audio.release(UUID())
+        precondition(activations == 1 && deactivations == 0 && audio.owners.count == 1)
+        audio.release(b)
+        precondition(deactivations == 1 && audio.owners.isEmpty)
+        print("PASS: releasing one player's audio lease cannot deactivate another player's session")
     }
     private static func settle() async throws { try await Task.sleep(for: .milliseconds(50)) }
     private static func waitForPending(_ site: FakeSite) async throws {

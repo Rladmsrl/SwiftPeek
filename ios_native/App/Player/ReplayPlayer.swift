@@ -73,6 +73,10 @@ final class ReplayPlayer {
     private var backgroundAudioAllowed = true
     private var resumeAfterBackground = false
     private var backgroundTask: Task<Void, Never>?
+    private let audioSessionOwner = UUID()
+    @ObservationIgnored private var interruptionToken: UUID?
+    private var interrupted = false
+    private var resumeAfterInterruption = false
 
     init() {
         playerLayer.player = player
@@ -87,9 +91,34 @@ final class ReplayPlayer {
         playerObservations.append(player.observe(\.timeControlStatus, options: [.new]) { [weak self] _, _ in
             Task { @MainActor in self?.syncState() }
         })
+        #if os(iOS)
+        interruptionToken = MobilePlaybackInterruption.shared.observe { [weak self] active in
+            guard let self else { return }
+            self.interrupted = active
+            if active {
+                self.resumeAfterInterruption = self.player.currentItem != nil && (self.pendingAutoplay || self.isPlaying)
+                self.pip?.stopPictureInPicture()
+                self.player.pause()
+                PlaybackAudioSession.shared.release(self.audioSessionOwner)
+            } else if self.resumeAfterInterruption {
+                self.resumeAfterInterruption = false
+                self.play()
+            }
+        }
+        #endif
     }
 
     var isPlaying: Bool { state == .playing || state == .buffering }
+    deinit {
+        #if os(iOS)
+        let token = interruptionToken
+        let owner = audioSessionOwner
+        Task { @MainActor in
+            MobilePlaybackInterruption.shared.remove(token)
+            PlaybackAudioSession.shared.release(owner)
+        }
+        #endif
+    }
     /// 拖动进度条时显示目标位置，而不是播放器回报的旧位置
     var displayTime: TimeInterval { seekTarget ?? currentTime }
 
@@ -195,11 +224,13 @@ final class ReplayPlayer {
     func play() {
         guard player.currentItem != nil else { return }
         pendingAutoplay = true
+        if interrupted { resumeAfterInterruption = true; return }
         if sceneBackgrounded, !backgroundAudioAllowed, !isPiPActive {
             resumeAfterBackground = true
             return
         }
         guard state != .loading else { return }
+        activateAudioSession()
         if state == .ended { seek(to: 0) }
         player.playImmediately(atRate: rate)
         syncState()
@@ -207,6 +238,7 @@ final class ReplayPlayer {
 
     func pause() {
         pendingAutoplay = false
+        resumeAfterInterruption = false
         resumeAfterBackground = false
         player.pause()
         syncState()
@@ -312,15 +344,15 @@ final class ReplayPlayer {
         if let timeObserver { player.removeTimeObserver(timeObserver) }
         timeObserver = nil
         #if os(iOS)
-        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+        MobilePlaybackInterruption.shared.remove(interruptionToken)
+        interruptionToken = nil
+        PlaybackAudioSession.shared.release(audioSessionOwner)
         #endif
     }
 
     private func activateAudioSession() {
         #if os(iOS)
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, mode: .moviePlayback)
-        try? session.setActive(true)
+        if !interrupted { PlaybackAudioSession.shared.acquire(audioSessionOwner) }
         #endif
     }
 

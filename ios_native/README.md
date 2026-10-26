@@ -5,6 +5,10 @@
 已兼容 iPhone Duo 折叠屏，覆盖内外屏、横竖屏和半折叠姿态。
 项目来源、AI 协作说明和许可证见 [项目首页](../README.md) 与 [来源与致谢](../THIRD_PARTY_NOTICES.md)。
 
+## 手机多看
+
+在播放器控制条点「加看」，从历史、关注或搜索添加直播间，支持同时观看 1–4 路。普通手机提供上下双屏与四宫格，Duo 按展开和半折叠区域调整布局；默认单路声音，每格可快捷静音。流程、资源策略与验证范围见[手机多看说明](../docs/mobile-multiwatch.md)。
+
 ## 下载与侧载
 
 当前版本 **0.8.2 (16)**：[下载无签名 IPA](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.2/SwiftPeek-0.8.2-iOS-unsigned.ipa)，支持 iOS / iPadOS 26+、arm64。对应源码和 SHA-256 校验文件见[发布页](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.2)。

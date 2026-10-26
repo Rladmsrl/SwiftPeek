@@ -57,6 +57,7 @@ final class FLVLivePlayer {
     var isInFloatingWindow = false
     #endif
     let diagnosticID = UUID().uuidString
+    private let audioSessionOwner = UUID()
     var videoSize: CGSize?
     var receivedBytes = 0
     var bufferedSeconds: Double = 0
@@ -181,6 +182,10 @@ final class FLVLivePlayer {
     deinit {
         cancelActiveStream()
         streamTask?.cancel()
+        #if os(iOS)
+        let owner = audioSessionOwner
+        Task { @MainActor in PlaybackAudioSession.shared.release(owner) }
+        #endif
     }
 
     /// 是否正在拉流、播放或重连。用于避免重复 start——
@@ -367,24 +372,16 @@ final class FLVLivePlayer {
         videoSize = nil
     }
 
-    private func configureAudioSession() {
+    @MainActor private func configureAudioSession() {
         #if os(iOS)
-        do {
-            let session = AVAudioSession.sharedInstance()
-            // 直播场景：后台可继续出声，且不打断他人音频时混音
-            try session.setCategory(.playback, mode: .moviePlayback)
-            try session.setActive(true)
-        } catch {
-            // 音频会话失败不应阻塞视频播放，仅记录
-            print("[FLVLivePlayer] 音频会话配置失败：\(error.localizedDescription)")
-        }
+        PlaybackAudioSession.shared.acquire(audioSessionOwner)
         #endif
     }
 
     /// 离开播放（用户停止、重连放弃）时把音频会话还回去，否则其他 App 会一直被压声。
-    private func deactivateAudioSession() {
+    @MainActor private func deactivateAudioSession() {
         #if os(iOS)
-        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+        PlaybackAudioSession.shared.release(audioSessionOwner)
         #endif
     }
 
@@ -939,12 +936,12 @@ final class FLVLivePlayer {
     ///
     /// 真机扬声器/听筒经常锁在 48kHz，44.1kHz 的 AAC 就要在很小的 IO 缓冲里重采样，
     /// 听感是周期性卡顿。模拟器不走这条硬件通路，所以只有真机明显。
-    /// 此时还没入队任何音频，改采样率不会打断正在播放的声音。
+    /// 仅在本播放器独占音频会话时调整；多路播放保持共同输出采样率。
     @MainActor
     private func preferHardwareSampleRate(_ sampleRate: Double, generation: UInt64) {
         guard isCurrent(generation) else { return }
         #if os(iOS)
-        try? AVAudioSession.sharedInstance().setPreferredSampleRate(sampleRate)
+        PlaybackAudioSession.shared.preferSampleRate(sampleRate, owner: audioSessionOwner)
         #endif
     }
 
@@ -1188,24 +1185,29 @@ final class FLVLivePlayer {
 #if os(iOS)
 struct FLVVideoLayerView: UIViewRepresentable {
     let player: FLVLivePlayer
+    var enabled = true
 
     func makeUIView(context: Context) -> LayerHostView {
         let view = LayerHostView()
         view.backgroundColor = .black
         view.isUserInteractionEnabled = false
-        view.hostedLayer = player.displayLayer
+        view.hostedLayer = enabled ? player.displayLayer : nil
         return view
     }
 
     func updateUIView(_ uiView: LayerHostView, context: Context) {
-        uiView.hostedLayer = player.displayLayer
+        uiView.hostedLayer = enabled ? player.displayLayer : nil
+    }
+
+    static func dismantleUIView(_ uiView: LayerHostView, coordinator: ()) {
+        uiView.hostedLayer = nil
     }
 
     final class LayerHostView: UIView {
         var hostedLayer: AVSampleBufferDisplayLayer? {
             didSet {
-                guard oldValue !== hostedLayer else { return }
-                oldValue?.removeFromSuperlayer()
+                if oldValue === hostedLayer, hostedLayer?.superlayer === layer { return }
+                if oldValue?.superlayer === layer { oldValue?.removeFromSuperlayer() }
                 if let hostedLayer {
                     layer.addSublayer(hostedLayer)
                     setNeedsLayout()
@@ -1216,6 +1218,7 @@ struct FLVVideoLayerView: UIViewRepresentable {
         override func layoutSubviews() {
             super.layoutSubviews()
             // 不依赖任何屏幕尺寸假设，始终跟随自身 bounds
+            guard hostedLayer?.superlayer === layer else { return }
             hostedLayer?.frame = bounds
         }
     }

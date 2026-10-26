@@ -21,6 +21,7 @@ struct SimpleLiveApp: App {
     @State private var settings = AppSettings()
     @State private var library = LibraryStore()
     @State private var followTransfer = FollowTransferController()
+    @State private var multiWatch = PhoneMultiWatch(makePlayer: { FLVLivePlayer() })
 
     var body: some Scene {
         WindowGroup {
@@ -31,14 +32,30 @@ struct SimpleLiveApp: App {
                 .environment(settings)
                 .environment(library)
                 .environment(router)
+                .environment(multiWatch)
                 .preferredColorScheme(settings.data.appearance.colorScheme)
                 .onOpenURL { url in
                     if !followTransfer.receive(url) { router.handle(url: url) }
                 }
                 .task {
+                    multiWatch.configure(settings: settings, library: library)
                     #if DEBUG
                     router.applyLaunchArguments()
+                    multiWatch.suppressConnectionsForLayoutPreview = UserDefaults.standard.bool(forKey: "launchRoomLayout")
+                    let layoutCount = UserDefaults.standard.integer(forKey: "launchMultiWatchLayout")
+                    if layoutCount > 0 {
+                        router.selectedTab = .mine
+                        multiWatch.showLayoutPreview(count: layoutCount)
+                    }
                     #endif
+                }
+                .fullScreenCover(isPresented: $multiWatch.isPresented, onDismiss: { multiWatch.finish() }) {
+                    MultiWatchView()
+                        .environment(multiWatch)
+                        .environment(settings)
+                        .environment(library)
+                        .tint(Theme.accent)
+                        .preferredColorScheme(settings.data.appearance.colorScheme)
                 }
         }
     }

@@ -94,6 +94,9 @@ final class Router {
         if let room = defaults.string(forKey: "launchRoom"), !room.isEmpty {
             open(roomID: room)
         }
+        if defaults.bool(forKey: "launchRoomLayout") {
+            open(roomID: "layout-origin", title: "当前直播")
+        }
 
         // Empty playback page for offline layout checks; no network or fake media.
         if defaults.bool(forKey: "launchReplayLayout") {

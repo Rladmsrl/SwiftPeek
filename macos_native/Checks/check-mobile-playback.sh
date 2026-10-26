@@ -9,6 +9,10 @@ export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Develope
 xcrun swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
   -I "$products_dir" "$products_dir/SimpleLiveKit.o" \
   "$repo_dir/ios_native/App/Player/PlaybackStreamSelection.swift" \
+  "$repo_dir/ios_native/App/Player/PlaybackAudioSession.swift" \
+  "$repo_dir/ios_native/App/Support/MultiWatchSession.swift" \
+  "$repo_dir/ios_native/App/Support/MultiWatchLayout.swift" \
+  "$repo_dir/ios_native/App/Support/MultiWatchRoomInput.swift" \
   "$repo_dir/ios_native/App/Support/MobileRoomPlaybackSession.swift" \
   "$repo_dir/ios_native/App/Support/Stores.swift" \
   "$repo_dir/ios_native/App/Support/AppSettings.swift" \

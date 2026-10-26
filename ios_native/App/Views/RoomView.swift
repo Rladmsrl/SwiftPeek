@@ -20,12 +20,15 @@ struct RoomView: View {
     @State private var showingDanmakuSettings = false
     @State private var hud: PlayerHUD?
     @State private var controlsHideTask: Task<Void, Never>?
+    @State private var choosingAdditionalRooms = false
+    @State private var pendingRooms: [MultiWatchSelection] = []
 
     @State private var sceneContext = PlayerSceneContext()
     @Environment(\.scenePhase) private var scenePhase
     @Environment(AppSettings.self) private var settings
     @Environment(LibraryStore.self) private var library
     @Environment(Router.self) private var router
+    @Environment(PhoneMultiWatch.self) private var multiWatch
 
     init(roomID: String, fallbackTitle: String) {
         self.roomID = roomID
@@ -85,9 +88,18 @@ struct RoomView: View {
                 .accessibilityLabel(isFollowed ? "取消关注" : "关注")
             }
         }
+        .sheet(isPresented: $choosingAdditionalRooms, onDismiss: addSelectedRooms) {
+            MultiWatchPicker(existing: [MultiWatchSelection(id: store.detail?.roomID ?? roomID,
+                                                          title: store.detail?.userName ?? fallbackTitle)]) {
+                pendingRooms = $0
+            }
+        }
         .task {
             if homeTab == nil { homeTab = router.selectedTab }
             configurePiP()
+            #if DEBUG
+            if UserDefaults.standard.bool(forKey: "launchRoomLayout") { return }
+            #endif
             playback.open(settings: settings, library: library)
             playback.setSceneBackgrounded(scenePhase == .background)
             await playback.waitUntilLoaded()
@@ -133,6 +145,7 @@ struct RoomView: View {
         }
         .onDisappear {
             controlsHideTask?.cancel()
+            if multiWatch.isPresented { pip.detach(); return }
 
             // 切 Tab 只是界面被盖住，人还在 App 里浏览——不该停流，
             // 否则切回来要整套重新拉（详情 + 签名 + 取流 + 弹幕重连）。
@@ -144,12 +157,17 @@ struct RoomView: View {
             pip.detach()
         }
         .onChange(of: settings.data.autoPictureInPicture) { configurePiP() }
+        .onChange(of: multiWatch.isPresented) { _, presented in
+            if presented { pip.detach() } else { configurePiP() }
+        }
         .onChange(of: store.isDanmakuVisible) { pip.refreshDanmaku() }
-        .onChange(of: settings.data.backgroundAudio) { _, enabled in playback.setBackgroundAudio(enabled) }
+        .onChange(of: settings.data.backgroundAudio) { _, enabled in
+            if !multiWatch.owns(playback) { playback.setBackgroundAudio(enabled) }
+        }
         .onChange(of: player.state) { pip.invalidatePlaybackState() }
         .onChange(of: playback.isWorking) { pip.invalidatePlaybackState() }
         .onChange(of: scenePhase) { _, phase in
-            handleScenePhase(phase)
+            if !multiWatch.owns(playback) { handleScenePhase(phase) }
         }
     }
 
@@ -159,7 +177,7 @@ struct RoomView: View {
         @Bindable var player = player
         return ZStack {
             Color.black
-            FLVVideoLayerView(player: player)
+            FLVVideoLayerView(player: player, enabled: !multiWatch.owns(playback))
                 .allowsHitTesting(false)
             DanmakuOverlay(
                 messages: store.messages,
@@ -379,6 +397,15 @@ struct RoomView: View {
     private func inlineControlRow(expanded: Bool, showsFullscreen: Bool = true) -> some View {
         HStack(spacing: 8) {
             danmakuToggleButton
+            Button {
+                pendingRooms = []
+                choosingAdditionalRooms = true
+                controlsHideTask?.cancel()
+            } label: {
+                Label("加看", systemImage: "rectangle.badge.plus").labelStyle(.iconOnly)
+            }
+            .accessibilityLabel("加看直播间")
+            .accessibilityIdentifier("multiwatch.entry")
             if expanded {
                 muteButton
                 qualityMenu
@@ -664,6 +691,7 @@ struct RoomView: View {
     // MARK: - 画中画
 
     private func configurePiP() {
+        guard !multiWatch.owns(playback) else { return }
         pip.attach(player: player, automatic: settings.data.autoPictureInPicture, settings: settings)
         pip.danmakuSnapshot = { [weak playback, weak settings] in
             guard let playback, let settings else { return PiPDanmakuSnapshot() }
@@ -680,6 +708,18 @@ struct RoomView: View {
             isPiPActive = active
             playback.setPictureInPictureActive(active)
         }
+    }
+
+    private func addSelectedRooms() {
+        guard !pendingRooms.isEmpty else { resetControlsTimer(); return }
+        let additions = pendingRooms
+        pendingRooms = []
+        pip.detach()
+        isPiPActive = false
+        playback.setPictureInPictureActive(false)
+        multiWatch.begin(from: playback, id: store.detail?.roomID ?? roomID,
+                         title: store.detail?.userName ?? fallbackTitle)
+        for room in additions { multiWatch.add(id: room.id, title: room.title) }
     }
 
     /// 控制条 4 秒无操作自动隐藏；任何一次交互都把计时重置

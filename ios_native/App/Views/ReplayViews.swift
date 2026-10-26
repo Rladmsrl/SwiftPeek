@@ -198,6 +198,7 @@ struct ReplayView: View {
         .task { start() }
         .onDisappear {
             hideTask?.cancel()
+            if MobilePlaybackInterruption.shared.isActive { return }
             // 切 Tab 只是被盖住，不打断播放；真正离开时暂停并记住进度
             let isTabSwitch = homeTab != nil && router.selectedTab != homeTab
             guard !isTabSwitch, !player.isPiPActive else { return }
