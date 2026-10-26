@@ -2,10 +2,10 @@
 
 ## 版本
 
-两端只从 `shared/version.yml` 读取版本。当前 0.8.1 (15)。每次发布递增版本和 build：
+两端只从 `shared/version.yml` 读取版本。当前源码及 iOS 发布为 0.8.2 (16)，macOS 安装包仍为 0.8.1 (15)。每次发布递增版本和 build：
 
 ```sh
-python3 scripts/bump-version.py          # 0.8.1 -> 0.8.2，同时 build +1
+python3 scripts/bump-version.py          # 0.8.2 -> 0.8.3，同时 build +1
 python3 scripts/bump-version.py 0.9.0    # 显式指定更高版本
 ```
 
@@ -40,3 +40,9 @@ Release 共享配置关闭 ENABLE_CODE_COVERAGE；构建时也应显式传入 EN
 0.8.1 已在同一 Release 补充公开无签名 IPA，源码版本和二进制版本保持一致。后续打包应从无签名 Release 的设备构建开始，创建只包含 `Payload/SwiftPeek.app` 的 IPA，清理符号路径并检查整个包，不携带维护者的 provisioning profile、签名身份、测试 target 或诊断文件。使用者需要自己的签名和相应安装工具；无签名 IPA 本身不能直接安装。不得为分发提供个人私钥或企业证书。
 
 iOS IPA 上传后应下载回验，并将其摘要加入同一版本的 SHA256SUMS.txt。当前 0.8.1 尚未验证重签后的真机安装、启动、网络播放、后台和 PiP，发布说明已明确这一限制；macOS 发布通过不代表 iOS 已完成验收。
+
+## iOS 0.8.2 打包
+
+从已提交且干净的快照运行 `bash scripts/release-ios.sh`。脚本以关闭签名和覆盖率的 Release 配置构建设备 arm64 产物，剥离调试路径后调用 `scripts/audit-release.py --platform ios`，生成无签名 IPA、同提交源码 ZIP 和 SHA256SUMS.txt。发布前解压 IPA 再审计，上传后下载回验摘要。只上传这三份文件，不能上传 staging、构建目录、签名开发包或私人日志。
+
+0.8.2 的代码已在维护者 Duo 上安装并验证小窗流畅度改善；公开无签名 IPA 重签后的安装验证仍需由使用者完成。本次仅发布 iOS 安装包，不替换 macOS 0.8.1 附件。

@@ -7,7 +7,7 @@
 
 ## 下载与侧载
 
-当前版本 **0.8.1 (15)**：[下载无签名 IPA](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.1/SwiftPeek-0.8.1-iOS-unsigned.ipa)，支持 iOS / iPadOS 26+、arm64。对应源码和 SHA-256 校验文件见[发布页](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.1)。
+当前版本 **0.8.2 (16)**：[下载无签名 IPA](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.2/SwiftPeek-0.8.2-iOS-unsigned.ipa)，支持 iOS / iPadOS 26+、arm64。对应源码和 SHA-256 校验文件见[发布页](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.2)。
 
 1. 下载 IPA，并核对发布页的 SHA-256 校验值。
 2. 使用自己的有效签名身份及适用的侧载工具，对整个 App 重新签名并安装；也可以按下文从源码构建到自己的设备。
@@ -72,8 +72,9 @@ iOS 使用系统 `AVPictureInPictureController`。进入画中画时继续播放
 开启后只在画中画期间额外生成带弹幕的视频帧，会增加耗电；退出小窗后停止合成。
 直播需要等待可解码的视频关键帧，准备期间保留普通画中画画面。
 
-小窗弹幕使用独立串行队列，以 60 fps 为动画调度目标；取帧/状态采样最多 30 fps。
-缩放与合成通过 CPU/vImage 完成，避免依赖后台受限制的应用 GPU 工作；迟到帧直接丢弃，不累积延迟。
+小窗视频按 60 fps 目标取帧和提交；弹幕在独立队列绘制透明图层，尽量跟随 60 fps。
+弹幕绘制繁忙时沿用上一张弹幕层，新视频继续提交。直播缓存按 60 fps 保留 4 秒画面，并在固定内存预算内自适应缩小分辨率。
+缩放与合成通过 CPU/vImage 完成，避免依赖后台受限制的应用 GPU 工作；迟到任务不排队追赶，不累积延迟。
 这不代表源视频被提升到 60 fps，也不保证所有设备始终达到目标值。修复依据与验证结果见 [小窗弹幕性能](../docs/pip-danmaku-performance.md)。
 
 系统画中画、音频路由、设备亮度与后台行为需要真机验证，编译或离线检查不能代替这些验证。

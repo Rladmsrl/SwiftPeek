@@ -341,6 +341,9 @@ final class FLVLivePlayer {
     /// 新样本的 PTS 全部落在「过去」，会被直接丢弃 —— 画面永远不恢复。
     @MainActor
     private func resetRenderPipeline(removingImage: Bool) {
+        #if os(iOS)
+        pipFrames.reset(streamGeneration: generationGate.current)
+        #endif
         synchronizer.setRate(0, time: .zero)
         scheduleVideoFlush(removingImage: removingImage)
         audioRenderer.flush()
@@ -1085,7 +1088,7 @@ final class FLVLivePlayer {
         } ?? false
         if enqueued {
             #if os(iOS)
-            pipFrames.append(sample)
+            pipFrames.append(sample, generation: generation)
             #endif
             context.lastQueuedEnd = CMTimeMaximum(context.lastQueuedEnd,
                 CMTimeAdd(CMSampleBufferGetPresentationTimeStamp(sample), CMTime(seconds: 1.0 / 60, preferredTimescale: 60000)))
@@ -1140,6 +1143,9 @@ final class FLVLivePlayer {
         // A new stream may have started while the renderer's async flush completed.
         guard isCurrent(generation) else { return }
         audioRenderer.flush()
+        #if os(iOS)
+        pipFrames.reset(streamGeneration: generation)
+        #endif
         context.didStartClock = false
         context.didReceiveKeyframe = false
         context.timestampBase = nil

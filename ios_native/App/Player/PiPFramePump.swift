@@ -21,24 +21,29 @@ final class PiPFramePump: @unchecked Sendable {
     private var latest: Input?
     // Everything below is confined to queue, including CPU pixel composition and renderer operations.
     private let compositor = PiPFrameCompositor()
+    private let danmakuRenderer: PiPAsyncDanmakuRenderer
     private var timer: DispatchSourceTimer?
     private let timebase: CMTimebase?
     private let isReady: () -> Bool
     private let enqueue: (CMSampleBuffer) -> Void
     private let flush: () -> Void
     private var lastInput: Input?
-    private var nextRequest: TimeInterval = -.infinity
+    private var lastEnqueuedFrame: CVPixelBuffer?
+    private var lastOverlay: CGImage?
     private var lastRender: TimeInterval = -.infinity
     private var reportStart: TimeInterval = 0
     private var enqueued = 0
     private var dropped = 0
     private var sourceFrames = 0
+    private var overlayFrames = 0
     private var maximumInputAge: Double = 0
     private var renderMilliseconds: Double = 0
 
-    init(timebase: CMTimebase?, isReady: @escaping () -> Bool,
+    init(timebase: CMTimebase?, danmakuRenderer: PiPAsyncDanmakuRenderer = PiPAsyncDanmakuRenderer(),
+         isReady: @escaping () -> Bool,
          enqueue: @escaping (CMSampleBuffer) -> Void, flush: @escaping () -> Void) {
         self.timebase = timebase
+        self.danmakuRenderer = danmakuRenderer
         self.isReady = isReady
         self.enqueue = enqueue
         self.flush = flush
@@ -55,13 +60,16 @@ final class PiPFramePump: @unchecked Sendable {
             guard let self, self.isCurrent(token) else { return }
             self.timer?.cancel()
             self.compositor.reset()
+            self.danmakuRenderer.reset()
             self.lastInput = nil
-            self.nextRequest = -.infinity
+            self.lastEnqueuedFrame = nil
+            self.lastOverlay = nil
             self.lastRender = -.infinity
             self.reportStart = CACurrentMediaTime()
             self.enqueued = 0
             self.dropped = 0
             self.sourceFrames = 0
+            self.overlayFrames = 0
             self.maximumInputAge = 0
             self.renderMilliseconds = 0
             let timer = DispatchSource.makeTimerSource(queue: self.queue)
@@ -91,7 +99,10 @@ final class PiPFramePump: @unchecked Sendable {
             self.timer?.cancel()
             self.timer = nil
             self.lastInput = nil
+            self.lastEnqueuedFrame = nil
+            self.lastOverlay = nil
             self.compositor.reset()
+            self.danmakuRenderer.reset()
             self.flush()
         }
     }
@@ -106,15 +117,17 @@ final class PiPFramePump: @unchecked Sendable {
         let now = CACurrentMediaTime()
         lock.lock()
         guard active, generation == token else { lock.unlock(); return }
-        let input = latest
-        let shouldRequest = !requestPending && (input == nil || now + 0.000_01 >= nextRequest)
+        // Request a fresh video frame on every 60 Hz tick. Only one UI request
+        // may be outstanding; never cap video acquisition to the text cadence.
+        let shouldRequest = !requestPending
         if shouldRequest {
             requestPending = true
-            let step = 1 / 30.0
-            nextRequest = nextRequest.isFinite ? nextRequest + (floor(max(0, now - nextRequest) / step) + 1) * step : now + step
         }
         lock.unlock()
         if shouldRequest { requestInput(token) }
+        lock.lock()
+        let input = latest
+        lock.unlock()
         guard let input else { return }
         // Pause freezes the timeline; still allow settings/seek updates at a modest cadence.
         if input.snapshot.isPaused, now - lastRender < 0.1 { return }
@@ -122,7 +135,6 @@ final class PiPFramePump: @unchecked Sendable {
         autoreleasepool {
             maximumInputAge = max(maximumInputAge, max(0, now - input.hostTime))
             if lastInput?.hostTime != input.hostTime {
-                if lastInput?.frame !== input.frame { sourceFrames += 1 }
                 if let previous = lastInput {
                     let expected = previous.mediaTime.seconds + (input.hostTime - previous.hostTime) * Double(previous.rate)
                     if input.snapshot.sourceID != previous.snapshot.sourceID
@@ -142,7 +154,11 @@ final class PiPFramePump: @unchecked Sendable {
             let pts = CMTimeAdd(input.mediaTime,
                 CMTime(seconds: max(0, now - input.hostTime) * Double(input.rate), preferredTimescale: 60_000))
             let start = CACurrentMediaTime()
-            guard let sample = compositor.compose(input.frame, snapshot: input.snapshot, at: now,
+            // Text layout/rasterization never runs on the video queue. If that
+            // worker is busy, reuse its last compatible overlay over NEW video.
+            let overlay = danmakuRenderer.image(snapshot: input.snapshot,
+                size: PiPFrameCompositor.size(for: input.frame), at: now)
+            guard let sample = compositor.compose(input.frame, overlay: overlay, at: now,
                                                    presentationTimeStamp: pts) else {
                 dropped += 1
                 report(at: now)
@@ -155,6 +171,10 @@ final class PiPFramePump: @unchecked Sendable {
             if active, generation == token {
                 enqueue(sample)
                 enqueued += 1
+                if lastEnqueuedFrame !== input.frame { sourceFrames += 1 }
+                if let overlay, lastOverlay !== overlay { overlayFrames += 1 }
+                lastEnqueuedFrame = input.frame
+                lastOverlay = overlay
                 lastRender = now
             }
             lock.unlock()
@@ -168,6 +188,7 @@ final class PiPFramePump: @unchecked Sendable {
         LiveDiagnostics.record("pip.composite.stats", fields: [
             "targetFPS": "60", "enqueuedFPS": String(format: "%.1f", Double(enqueued) / elapsed),
             "sourceFPS": String(format: "%.1f", Double(sourceFrames) / elapsed),
+            "danmakuFPS": String(format: "%.1f", Double(overlayFrames) / elapsed),
             "maxInputAgeMS": String(format: "%.1f", maximumInputAge * 1000),
             "meanRenderMS": String(format: "%.2f", renderMilliseconds / Double(max(1, enqueued))),
             "dropped": String(dropped)
@@ -176,6 +197,7 @@ final class PiPFramePump: @unchecked Sendable {
         enqueued = 0
         dropped = 0
         sourceFrames = 0
+        overlayFrames = 0
         maximumInputAge = 0
         renderMilliseconds = 0
     }

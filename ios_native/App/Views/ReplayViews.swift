@@ -217,6 +217,9 @@ struct ReplayView: View {
             default: break
             }
         }
+        .onChange(of: settings.data.backgroundAudio) { _, enabled in
+            player.setBackgrounded(scenePhase == .background, keepAudio: enabled)
+        }
         .onChange(of: player.isPlaying) { _, playing in
             if playing { scheduleHide() } else { controlsVisible = true }
         }
@@ -228,6 +231,7 @@ struct ReplayView: View {
         guard !started else { return }
         started = true
         session.configure(settings: settings)
+        player.setBackgrounded(scenePhase == .background, keepAudio: settings.data.backgroundAudio)
         if let hashID = route.hashID { session.open(hashID: hashID, start: route.start) }
         if let list { Task { await list.refresh() } }
     }

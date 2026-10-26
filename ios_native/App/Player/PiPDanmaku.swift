@@ -117,10 +117,102 @@ final class PiPDanmakuTimeline {
     }
 }
 
-/// CPU composition into reusable, bounded 960-pixel surfaces. This remains usable
-/// when iOS restricts application GPU access in the background. No video encoding.
-final class PiPFrameCompositor {
+/// Text layout and rasterization are confined to the overlay worker.
+final class PiPDanmakuRasterizer {
     let timeline = PiPDanmakuTimeline()
+    private let colorSpace = CGColorSpaceCreateDeviceRGB()
+
+    func render(_ snapshot: PiPDanmakuSnapshot, size: CGSize, at time: TimeInterval) -> CGImage? {
+        let canvas = CGSize(width: 480, height: 480 * size.height / size.width)
+        timeline.update(snapshot, size: canvas, at: time)
+        guard !timeline.items.isEmpty,
+              let bitmap = CGContext(data: nil, width: Int(size.width), height: Int(size.height),
+                  bitsPerComponent: 8, bytesPerRow: 0, space: colorSpace,
+                  bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue)
+        else { return nil }
+        bitmap.scaleBy(x: size.width / canvas.width, y: size.height / canvas.height)
+        for item in timeline.items {
+            let origin = timeline.origin(for: item)
+            guard origin.x < canvas.width, origin.x + item.size.width > 0 else { continue }
+            bitmap.setAlpha(item.opacity)
+            bitmap.draw(item.image, in: CGRect(origin: origin, size: item.size))
+        }
+        return bitmap.makeImage()
+    }
+}
+
+/// One in-flight text render, no backlog. A slow/dense overlay can reduce its own
+/// refresh rate without holding up video acquisition, scaling or submission.
+final class PiPAsyncDanmakuRenderer: @unchecked Sendable {
+    private struct Key: Equatable {
+        let size: CGSize
+        let settings: DanmakuSettings
+        let sourceID: String
+        let clearToken: Int
+        let visible: Bool
+        let paused: Bool
+    }
+    private let queue: DispatchQueue
+    private let lock = NSLock()
+    private var generation = 0
+    private var revision = 0
+    private var busy = false
+    private var latestKey: Key?
+    private var latestImage: CGImage?
+    // Only accessed by queue.
+    private let rasterizer = PiPDanmakuRasterizer()
+    private var renderedGeneration = -1
+
+    init(queue: DispatchQueue = DispatchQueue(label: "com.simplelive.pip.danmaku", qos: .utility)) {
+        self.queue = queue
+    }
+
+    func reset() {
+        lock.lock()
+        generation += 1
+        revision += 1
+        latestKey = nil
+        latestImage = nil
+        lock.unlock()
+    }
+
+    func image(snapshot: PiPDanmakuSnapshot, size: CGSize, at time: TimeInterval) -> CGImage? {
+        let key = Key(size: size, settings: snapshot.settings, sourceID: snapshot.sourceID,
+                      clearToken: snapshot.clearToken, visible: snapshot.isVisible, paused: snapshot.isPaused)
+        lock.lock()
+        // Invalidate immediately, even if a previous render is still running.
+        if latestKey != key { latestKey = key; latestImage = nil; revision += 1 }
+        let result = snapshot.isVisible ? latestImage : nil
+        let token = generation
+        let requestRevision = revision
+        let shouldRender = !busy
+        if shouldRender { busy = true }
+        lock.unlock()
+        if shouldRender {
+            queue.async { [weak self] in
+                guard let self else { return }
+                autoreleasepool {
+                    if self.renderedGeneration != token {
+                        self.rasterizer.timeline.reset()
+                        self.renderedGeneration = token
+                    }
+                    let image = self.rasterizer.render(snapshot, size: size, at: time)
+                    self.lock.lock()
+                    if self.generation == token, self.revision == requestRevision { self.latestImage = image }
+                    self.busy = false
+                    self.lock.unlock()
+                }
+            }
+        }
+        return result
+    }
+}
+
+/// CPU video composition into bounded surfaces, with one cached transparent
+/// overlay blend per frame. No text layout or application GPU work is required.
+final class PiPFrameCompositor {
+    private let rasterizer = PiPDanmakuRasterizer()
+    var timeline: PiPDanmakuTimeline { rasterizer.timeline }
     private let colorSpace = CGColorSpaceCreateDeviceRGB()
     private var pool: CVPixelBufferPool?
     private var outputSize = CGSize.zero
@@ -135,11 +227,22 @@ final class PiPFrameCompositor {
 
     func compose(_ frame: CVPixelBuffer, snapshot: PiPDanmakuSnapshot, at time: TimeInterval,
                  presentationTimeStamp: CMTime? = nil) -> CMSampleBuffer? {
+        // Synchronous entry point for offscreen pixel checks. The real-time pump
+        // supplies an independently rendered overlay through the overload below.
+        let overlay = rasterizer.render(snapshot, size: Self.size(for: frame), at: time)
+        return compose(frame, overlay: overlay, at: time, presentationTimeStamp: presentationTimeStamp)
+    }
+
+    static func size(for frame: CVPixelBuffer) -> CGSize {
         let width = CGFloat(CVPixelBufferGetWidth(frame)), height = CGFloat(CVPixelBufferGetHeight(frame))
-        guard width > 0, height > 0 else { return nil }
         let scale = min(1, 960 / max(width, height))
-        let size = CGSize(width: max(2, floor(width * scale / 2) * 2),
+        return CGSize(width: max(2, floor(width * scale / 2) * 2),
                           height: max(2, floor(height * scale / 2) * 2))
+    }
+
+    func compose(_ frame: CVPixelBuffer, overlay: CGImage?, at time: TimeInterval,
+                 presentationTimeStamp: CMTime? = nil) -> CMSampleBuffer? {
+        let size = Self.size(for: frame)
         if size != outputSize {
             outputSize = size
             format = nil
@@ -157,9 +260,9 @@ final class PiPFrameCompositor {
         let limits = [kCVPixelBufferPoolAllocationThresholdKey as String: 6] as CFDictionary
         guard CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(nil, pool, limits, &pixel) == kCVReturnSuccess,
               let pixel else { return nil }
-        let canvas = CGSize(width: 480, height: 480 * size.height / size.width)
-        timeline.update(snapshot, size: canvas, at: time)
-        guard PiPPixelTransfer.copy(frame, to: pixel), drawMessages(into: pixel, size: size, canvas: canvas) else { return nil }
+        guard PiPPixelTransfer.copy(frame, to: pixel) else { return nil }
+        // Failure to paint optional text must not drop a successfully copied video frame.
+        if let overlay { draw(overlay, into: pixel, size: size) }
         if format == nil { CMVideoFormatDescriptionCreateForImageBuffer(allocator: nil, imageBuffer: pixel, formatDescriptionOut: &format) }
         guard let format else { return nil }
         var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: 60),
@@ -173,22 +276,14 @@ final class PiPFrameCompositor {
         return sample
     }
 
-    private func drawMessages(into buffer: CVPixelBuffer, size: CGSize, canvas: CGSize) -> Bool {
-        guard !timeline.items.isEmpty else { return true }
-        guard CVPixelBufferLockBaseAddress(buffer, []) == kCVReturnSuccess else { return false }
+    private func draw(_ overlay: CGImage, into buffer: CVPixelBuffer, size: CGSize) {
+        guard CVPixelBufferLockBaseAddress(buffer, []) == kCVReturnSuccess else { return }
         defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
         guard let bitmap = CGContext(data: CVPixelBufferGetBaseAddress(buffer),
                                      width: Int(size.width), height: Int(size.height), bitsPerComponent: 8,
                                      bytesPerRow: CVPixelBufferGetBytesPerRow(buffer), space: colorSpace,
                                      bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue)
-        else { return false }
-        bitmap.scaleBy(x: size.width / canvas.width, y: size.height / canvas.height)
-        for item in timeline.items {
-            let origin = timeline.origin(for: item)
-            guard origin.x < canvas.width, origin.x + item.size.width > 0 else { continue }
-            bitmap.setAlpha(item.opacity)
-            bitmap.draw(item.image, in: CGRect(origin: origin, size: item.size))
-        }
-        return true
+        else { return }
+        bitmap.draw(overlay, in: CGRect(origin: .zero, size: size))
     }
 }

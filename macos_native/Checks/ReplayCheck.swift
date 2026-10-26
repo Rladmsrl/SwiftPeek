@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import SimpleLiveKit
 
 /// 录像弹幕投放、观看进度与热度曲线的离线检查：假接口，不联网、不启动 App。
@@ -87,6 +88,103 @@ struct ReplayCheck {
         precondition(bins.count == 7 && bins.max() == 1 && bins[0] == 0 && bins[2] > 0)
         precondition(ReplayDanmakuHeat.normalize([0, 0]).allSatisfy { $0 == 0 })
         print("PASS: heat curve normalizes and smooths")
+        try await playerLifecycleCheck()
+    }
+
+    @MainActor static func playerLifecycleCheck() async throws {
+        let directory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent(".local/replay-check-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let short = directory.appendingPathComponent("short.mov")
+        let long = directory.appendingPathComponent("long.mov")
+        try await makeVideo(at: short, seconds: 2)
+        try await makeVideo(at: long, seconds: 8)
+        let playback = ReplayPlayer()
+        defer { playback.shutdown() }
+
+        playback.load(url: short, at: 0.5, autoplay: true)
+        playback.pause() // A user pause while the item is still loading.
+        try await ready(playback)
+        precondition(playback.player.rate == 0 && playback.state == .paused, "Loading must preserve a user pause")
+        precondition(abs(playback.player.currentTime().seconds - 0.5) < 0.1, "Sub-second resume positions must not be skipped")
+        let oldItem = playback.player.currentItem!
+        playback.load(url: long, at: 0, autoplay: false)
+        precondition(playback.duration == 0 && playback.videoSize == nil, "New items must not inherit old duration or dimensions")
+        playback.seek(to: 6)
+        precondition(playback.displayTime == 6, "A longer new item must not clamp seeks to the previous short duration")
+        NotificationCenter.default.post(name: AVPlayerItem.didPlayToEndTimeNotification, object: oldItem)
+        precondition(playback.state == .loading, "Old end notifications must not end the new item")
+        try await ready(playback)
+        precondition(abs(playback.player.currentTime().seconds - 6) < 0.1)
+
+        playback.load(url: long, at: 5, autoplay: true)
+        playback.load(url: short, at: 0, autoplay: false)
+        playback.skip(by: -10)
+        precondition(playback.displayTime == 0, "A seek before duration is known must clamp to zero")
+        try await ready(playback)
+        precondition(playback.player.rate == 0 && playback.player.currentTime().seconds < 0.1,
+                     "Rapid item replacement must preserve the newest start position and autoplay intent")
+        print("PASS: real AVPlayer load/pause, sub-second resume, item replacement, duration reset and pending seeks")
+
+        playback.load(url: long, at: 1, autoplay: true)
+        try await ready(playback)
+        playback.setBackgrounded(true, keepAudio: false)
+        try await Task.sleep(for: .milliseconds(500))
+        precondition(playback.player.rate == 0, "Disabling background audio must pause replay outside PiP")
+        playback.setBackgrounded(false, keepAudio: false)
+        precondition(playback.player.rate > 0, "Foregrounding should restore background-suspended playback")
+        playback.setBackgrounded(true, keepAudio: false)
+        try await Task.sleep(for: .milliseconds(500))
+        playback.pause()
+        playback.setBackgrounded(false, keepAudio: false)
+        precondition(playback.player.rate == 0, "A manual pause must cancel automatic foreground resume")
+        playback.setBackgrounded(true, keepAudio: false)
+        playback.load(url: long, at: 1, autoplay: true)
+        try await ready(playback)
+        precondition(playback.player.rate == 0, "Finishing a load in the background must honor background-audio settings")
+        playback.setBackgrounded(false, keepAudio: false)
+        precondition(playback.player.rate > 0)
+        print("PASS: replay background stop/resume, manual pause and loading while backgrounded")
+    }
+
+    @MainActor static func ready(_ playback: ReplayPlayer) async throws {
+        for _ in 0..<500 {
+            if playback.state != .loading { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        precondition(playback.state == .playing || playback.state == .buffering || playback.state == .paused,
+                     "Local replay fixture did not become ready: \(playback.state)")
+    }
+
+    static func makeVideo(at url: URL, seconds: Int) async throws {
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 64, AVVideoHeightKey: 64
+        ])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: 64, kCVPixelBufferHeightKey as String: 64
+        ])
+        writer.add(input)
+        precondition(writer.startWriting())
+        writer.startSession(atSourceTime: .zero)
+        var frame: CVPixelBuffer?
+        precondition(CVPixelBufferPoolCreatePixelBuffer(nil, adaptor.pixelBufferPool!, &frame) == kCVReturnSuccess)
+        CVPixelBufferLockBaseAddress(frame!, [])
+        memset(CVPixelBufferGetBaseAddress(frame!)!, 128, CVPixelBufferGetDataSize(frame!))
+        CVPixelBufferUnlockBaseAddress(frame!, [])
+        for index in 0..<(seconds * 2) {
+            while !input.isReadyForMoreMediaData {
+                precondition(writer.status == .writing)
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            precondition(adaptor.append(frame!, withPresentationTime: CMTime(value: Int64(index), timescale: 2)))
+        }
+        writer.endSession(atSourceTime: CMTime(value: Int64(seconds), timescale: 1))
+        input.markAsFinished()
+        await writer.finishWriting()
+        precondition(writer.status == .completed)
     }
 
     @MainActor static func settle(_ feed: ReplayDanmakuFeed) async throws {

@@ -666,9 +666,11 @@ struct RoomView: View {
     private func configurePiP() {
         pip.attach(player: player, automatic: settings.data.autoPictureInPicture, settings: settings)
         pip.danmakuSnapshot = { [weak playback, weak settings] in
-            guard let store = playback?.store, let settings else { return PiPDanmakuSnapshot() }
+            guard let playback, let settings else { return PiPDanmakuSnapshot() }
+            let store = playback.store
             return PiPDanmakuSnapshot(messages: store.messages, settings: settings.danmakuSettings,
                                       isVisible: settings.data.pictureInPictureDanmaku && store.isDanmakuVisible,
+                                      isPaused: !playback.playbackRequested, clearToken: playback.player.pipFrames.revision,
                                       sourceID: store.roomID)
         }
         pip.onRequestPlay = { playback.play() }

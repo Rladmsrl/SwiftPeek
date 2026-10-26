@@ -110,31 +110,64 @@ struct PiPDanmakuCheck {
         print("PASS: media-clock timestamps do not conflict with DisplayImmediately")
 
         cadenceCheck()
-        try decodeCheck(pixel)
+        try decodeCheck(pixel, reordered: false)
+        try decodeCheck(pixel, reordered: true)
         pumpCheck(pixel)
+        overlayCheck(pixel)
+        videoPriorityCheck()
     }
 
     static func cadenceCheck() {
-        for fps in [24, 25, 30, 50, 60] {
+        for fps in [24, 25, 30, 50, 60, 120] {
             var cadence = PiPVideoSamplingClock()
             let accepted = (0..<(fps * 4)).filter { index in
                 cadence.accepts(Double(index) / Double(fps) + (index % 2 == 0 ? 0.000_000_01 : 0))
             }.count
-            precondition(abs(accepted - min(30, fps) * 4) <= 1, "Input sampling must not halve 30fps video")
+            precondition(abs(accepted - min(60, fps) * 4) <= 1, "PiP must preserve every source frame up to 60fps")
         }
-        print("PASS: 24/25/30/50/60 fps inputs retain the expected sampling cadence")
+        for fps in [24, 25, 30, 50, 60] {
+            for rounded in [false, true] {
+                var cadence = PiPVideoSamplingClock()
+                let accepted = (0..<(fps * 4)).filter { index in
+                    let milliseconds = Double(index) * 1000 / Double(fps)
+                    return cadence.accepts((rounded ? milliseconds.rounded() : floor(milliseconds)) / 1000)
+                }.count
+                precondition(accepted == fps * 4, "Millisecond FLV timestamps must retain all \(fps)fps frames: \(accepted)")
+            }
+        }
+        print("PASS: integer-millisecond FLV timestamps retain every 24/25/30/50/60fps frame")
+        for fps in [24, 25, 30, 50, 60] {
+            for offset in [0.0, 0.015, 30.003] {
+                var cadence = PiPVideoSamplingClock()
+                // Reference frame first, then its earlier B frames (I P B B B).
+                let order = stride(from: 0, to: fps * 4, by: 4).flatMap { start in
+                    [start + 3, start, start + 1, start + 2].filter { $0 < fps * 4 }
+                }
+                let times = order.map { floor((Double($0) / Double(fps) + offset) * 1000) / 1000 }
+                precondition(times.allSatisfy { cadence.accepts($0) }, "Reordered B frames must survive sampling at \(fps)fps")
+                precondition(!cadence.accepts(times.last!), "A repeated source timestamp must not be counted as a new frame")
+            }
+        }
+        print("PASS: reordered I/P/B timestamps retain full video cadence, including millisecond quantization and nonzero origins")
+        print("PASS: 24/25/30/50/60 fps inputs retain their full cadence; 120 fps is bounded to 60")
     }
 
     final class PumpProbe: @unchecked Sendable {
         let lock = NSLock()
         let pixel: CVPixelBuffer // Immutable fixture, read by the worker only.
+        let fixtures: [CVPixelBuffer]
         var seeded = false
         var count = 0
         var ready = true
         var pts: [Double] = []
         var firstPixels: Data?
         var lastPixels: Data?
-        init(pixel: CVPixelBuffer) { self.pixel = pixel }
+        var videoMarkers: [UInt8] = []
+        var requested = 0
+        init(pixel: CVPixelBuffer, fixtures: [CVPixelBuffer] = []) {
+            self.pixel = pixel
+            self.fixtures = fixtures
+        }
         func receive(_ sample: CMSampleBuffer) {
             lock.lock()
             defer { lock.unlock() }
@@ -144,6 +177,7 @@ struct PiPDanmakuCheck {
                 let image = pixels(buffer)
                 if firstPixels == nil { firstPixels = image }
                 lastPixels = image
+                videoMarkers.append(image[0])
             }
         }
         func read<T>(_ body: (PumpProbe) -> T) -> T {
@@ -224,8 +258,31 @@ struct PiPDanmakuCheck {
         return Data(bytes: CVPixelBufferGetBaseAddress(pixel)!, count: CVPixelBufferGetBytesPerRow(pixel) * CVPixelBufferGetHeight(pixel))
     }
 
-    static func decodeCheck(_ pixel: CVPixelBuffer) throws {
+    final class EncodedProbe: @unchecked Sendable {
+        private let lock = NSLock()
+        private var sample: CMSampleBuffer?
+        private var previousPTS = CMTime.invalid
+        private var reordered = false
+        func keepFirst(_ sample: CMSampleBuffer) {
+            lock.lock(); defer { lock.unlock() }
+            if self.sample == nil { self.sample = sample }
+            let pts = CMSampleBufferGetPresentationTimeStamp(sample)
+            if previousPTS.isValid, pts < previousPTS { reordered = true }
+            previousPTS = pts
+        }
+        var first: CMSampleBuffer? {
+            lock.lock(); defer { lock.unlock() }
+            return sample
+        }
+        var hasReorderedFrames: Bool {
+            lock.lock(); defer { lock.unlock() }
+            return reordered
+        }
+    }
+
+    static func decodeCheck(_ pixel: CVPixelBuffer, reordered: Bool) throws {
         let source = PiPLiveFrameSource()
+        let encoded = EncodedProbe()
         source.setEnabled(true)
         var encoder: VTCompressionSession?
         precondition(VTCompressionSessionCreate(allocator: nil, width: 640, height: 360, codecType: kCMVideoCodecType_H264,
@@ -233,25 +290,151 @@ struct PiPDanmakuCheck {
             outputCallback: nil, refcon: nil, compressionSessionOut: &encoder) == noErr)
         let session = encoder!
         defer { VTCompressionSessionInvalidate(session) }
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
-        for i in 0..<60 {
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering,
+                             value: reordered ? kCFBooleanTrue : kCFBooleanFalse)
+        if reordered {
+            VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_H264_High_AutoLevel)
+        }
+        for i in 0..<240 {
             precondition(VTCompressionSessionEncodeFrame(session, imageBuffer: pixel,
-                presentationTimeStamp: CMTime(value: Int64(i), timescale: 30), duration: CMTime(value: 1, timescale: 30),
+                presentationTimeStamp: CMTime(value: Int64(i), timescale: 60), duration: CMTime(value: 1, timescale: 60),
                 frameProperties: nil, infoFlagsOut: nil) { status, _, sample in
                     precondition(status == noErr)
-                    if let sample { source.append(sample) }
+                    if let sample { encoded.keepFirst(sample); source.append(sample) }
                 } == noErr)
         }
         VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
-        let frame = source.frame(at: CMTime(seconds: 1, preferredTimescale: 600))
+        if reordered {
+            precondition(encoded.hasReorderedFrames, "The B-frame fixture must actually produce non-monotonic presentation timestamps")
+        }
+        var previous: CVPixelBuffer?
+        for i in 0..<240 {
+            let decoded = source.frame(at: CMTime(value: Int64(i), timescale: 60))
+            precondition(decoded != nil && decoded !== previous,
+                         "Four seconds of 60fps video must retain 240 distinct frames, including the oldest unplayed frame")
+            precondition(CVPixelBufferGetDataSize(decoded!) * 244 <= 96 * 1024 * 1024,
+                         "The complete 60fps lookahead must fit the existing memory budget")
+            previous = decoded
+        }
+        let frame = source.frame(at: CMTime(value: 239, timescale: 60))
         precondition(frame != nil, "Real H.264 decode must yield frames selected on the playback clock")
-        precondition(CVPixelBufferGetWidth(frame!) == 480)
+        precondition(CVPixelBufferGetWidth(frame!) <= 480)
         precondition(source.frame(at: CMTime(seconds: -1, preferredTimescale: 600)) == nil, "Do not display future frames")
+        let oldRevision = source.revision
+        source.reset(streamGeneration: 7)
+        precondition(source.revision != oldRevision && source.frame(at: .zero) == nil,
+                     "A restart must clear both decoder state and retained frames")
+        source.append(encoded.first!, generation: 0)
+        precondition(source.frame(at: .zero) == nil, "Late compressed input from an old stream must be rejected")
+        source.append(encoded.first!, generation: 7)
+        precondition(source.frame(at: .zero) != nil, "The same codec/PTS must decode normally in a new stream generation")
         source.setEnabled(false)
         precondition(source.frame(at: CMTime(seconds: 2, preferredTimescale: 600)) == nil)
         source.setEnabled(true)
         precondition(source.frame(at: .zero) == nil, "A new PiP session must not reuse old video")
         source.setEnabled(false)
-        print("PASS: synthetic H.264 decode, reduced-size frames, playback-clock selection and teardown")
+        print("PASS: 240 distinct H.264 frames at 60fps (B frames: \(reordered)), four-second lookahead within 96 MiB, playback-clock selection and teardown")
+        print("PASS: explicit live stream reset, stale compressed input rejection, same-codec/time restart")
+    }
+
+    static func videoPriorityCheck() {
+        // Stall the actual text worker, then verify distinct VIDEO pixels keep
+        // arriving at 60 Hz. Counting duplicate composite submissions misses this bug.
+        let textQueue = DispatchQueue(label: "check.pip.blocked-text")
+        textQueue.suspend()
+        let textRenderer = PiPAsyncDanmakuRenderer(queue: textQueue)
+        let frames = (0..<90).map { index -> CVPixelBuffer in
+            let frame = makePixel()
+            CVPixelBufferLockBaseAddress(frame, [])
+            CVPixelBufferGetBaseAddress(frame)!.assumingMemoryBound(to: UInt8.self)[0] = UInt8(index)
+            CVPixelBufferUnlockBaseAddress(frame, [])
+            return frame
+        }
+        let probe = PumpProbe(pixel: frames[0], fixtures: frames)
+        let snapshot = PiPDanmakuSnapshot(messages: (0..<160).map { message("密集弹幕 \($0)") },
+                                         isVisible: true, sourceID: "video-priority")
+        let pump = PiPFramePump(timebase: nil, danmakuRenderer: textRenderer,
+            isReady: { true }, enqueue: { probe.receive($0) }, flush: {})
+        pump.start(generation: 1) { token in
+            let now = CACurrentMediaTime()
+            let frame = probe.read { value in
+                defer { value.requested += 1 }
+                return value.fixtures[value.requested % value.fixtures.count]
+            }
+            pump.submit(.init(frame: frame, snapshot: snapshot, hostTime: now,
+                              mediaTime: CMTime(seconds: now, preferredTimescale: 60_000), rate: 1), generation: token)
+        }
+        Thread.sleep(forTimeInterval: 1)
+        let count = probe.read { $0.count }
+        let unique = probe.read { Set($0.videoMarkers).count }
+        // Allow scheduling noise, but a 30fps acquisition ceiling must fail.
+        precondition(count >= 50 && unique >= 50, "Blocked text must not reduce VIDEO to 30fps: \(unique)/\(count)")
+        textQueue.resume()
+        textQueue.sync {}
+        let resumedAt = probe.read { $0.videoMarkers.count }
+        Thread.sleep(forTimeInterval: 1)
+        pump.stop()
+        let resumedUnique = probe.read { Set($0.videoMarkers.dropFirst(resumedAt)).count }
+        precondition(resumedUnique >= 50, "Active dense text must also preserve fresh video cadence")
+        print("PASS: blocked danmaku worker: \(unique) distinct video frames / \(count) submissions in 1s")
+        print("PASS: active dense danmaku: \(resumedUnique) distinct video frames in 1s")
+    }
+
+    static func overlayCheck(_ pixel: CVPixelBuffer) {
+        let queue = DispatchQueue(label: "check.pip.overlay")
+        let renderer = PiPAsyncDanmakuRenderer(queue: queue)
+        let compositor = PiPFrameCompositor()
+        let size = PiPFrameCompositor.size(for: pixel)
+        var snapshot = PiPDanmakuSnapshot(messages: [message("异步透明弹幕")], isVisible: true, sourceID: "overlay")
+        _ = renderer.image(snapshot: snapshot, size: size, at: 0)
+        queue.sync {}
+        _ = renderer.image(snapshot: snapshot, size: size, at: 1)
+        queue.sync {}
+        let overlay = renderer.image(snapshot: snapshot, size: size, at: 2)
+        precondition(overlay != nil)
+        queue.sync {}
+        let composed = compositor.compose(pixel, overlay: overlay, at: 2)!
+        let plain = pixels(pixel)
+        let painted = pixels(CMSampleBufferGetImageBuffer(composed)!)
+        precondition(plain != painted, "The independently rendered overlay must appear on video")
+        precondition(plain.suffix(CVPixelBufferGetBytesPerRow(pixel) * 100)
+                     == painted.suffix(CVPixelBufferGetBytesPerRow(pixel) * 100), "Overlay must preserve the video below it")
+
+        snapshot.isPaused = true
+        _ = renderer.image(snapshot: snapshot, size: size, at: 2)
+        queue.sync {}
+        let frozen = renderer.image(snapshot: snapshot, size: size, at: 100)!
+        queue.sync {}
+        let stillFrozen = renderer.image(snapshot: snapshot, size: size, at: 101)!
+        queue.sync {}
+        let pausedA = compositor.compose(pixel, overlay: frozen, at: 100)!
+        let pausedB = compositor.compose(pixel, overlay: stillFrozen, at: 101)!
+        precondition(pixels(CMSampleBufferGetImageBuffer(pausedA)!) == pixels(CMSampleBufferGetImageBuffer(pausedB)!),
+                     "An asynchronous overlay must freeze when paused")
+
+        // A hide/show cycle while a render is in flight must not resurrect it,
+        // even when the final settings key equals the original key.
+        queue.suspend()
+        _ = renderer.image(snapshot: snapshot, size: size, at: 102)
+        snapshot.isVisible = false
+        precondition(renderer.image(snapshot: snapshot, size: size, at: 102) == nil)
+        snapshot.isVisible = true
+        precondition(renderer.image(snapshot: snapshot, size: size, at: 102) == nil)
+        queue.resume()
+        queue.sync {}
+        precondition(renderer.image(snapshot: snapshot, size: size, at: 103) == nil,
+                     "A superseded render cannot return after hide/show")
+        queue.sync {}
+        snapshot.clearToken += 1
+        snapshot.messages = []
+        precondition(renderer.image(snapshot: snapshot, size: size, at: 104) == nil)
+        queue.sync {}
+        snapshot.sourceID = "new-source"
+        precondition(renderer.image(snapshot: snapshot, size: size, at: 105) == nil)
+        queue.sync {}
+        renderer.reset()
+        precondition(renderer.image(snapshot: snapshot, size: size, at: 106) == nil)
+        queue.sync {}
+        print("PASS: asynchronous overlay pixels, pause, immediate hide/seek/source/reset invalidation and stale render rejection")
     }
 }

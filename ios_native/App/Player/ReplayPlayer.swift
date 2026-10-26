@@ -24,7 +24,9 @@ final class ReplayPlayer {
     private(set) var duration: TimeInterval = 0
     private(set) var bufferedTime: TimeInterval = 0
     private(set) var videoSize: CGSize?
-    private(set) var isPiPActive = false
+    private(set) var isPiPActive = false {
+        didSet { reconcileBackground() }
+    }
     var onPiPRestore: (() -> Void)?
 
     var rate: Float = 1 {
@@ -47,6 +49,8 @@ final class ReplayPlayer {
     /// 等待中的起播位置与是否自动播放，item 就绪后执行
     private var pendingStart: TimeInterval = 0
     private var pendingAutoplay = true
+    private var itemGeneration = 0
+    private var seekGeneration = 0
     private var seekTarget: TimeInterval?
     private var timeObserver: Any?
     private var itemObservations: [NSKeyValueObservation] = []
@@ -65,6 +69,10 @@ final class ReplayPlayer {
     private var videoOutput: AVPlayerItemVideoOutput?
     #endif
     private var isShutDown = false
+    private var sceneBackgrounded = false
+    private var backgroundAudioAllowed = true
+    private var resumeAfterBackground = false
+    private var backgroundTask: Task<Void, Never>?
 
     init() {
         playerLayer.player = player
@@ -93,10 +101,13 @@ final class ReplayPlayer {
         activateAudioSession()
         pendingStart = max(0, start)
         pendingAutoplay = autoplay
+        resumeAfterBackground = false
         // 新 item 就绪前播放器会短暂回报 0 秒，先锁住目标位置，免得被当成拖动
         seekTarget = pendingStart
         currentTime = pendingStart
         bufferedTime = 0
+        duration = 0
+        videoSize = nil
         state = .loading
         let asset = AVURLAsset(url: url, options: [AVURLAssetHTTPUserAgentKey: HTTPClient.desktopUserAgent])
         let item = AVPlayerItem(asset: asset)
@@ -114,22 +125,27 @@ final class ReplayPlayer {
             },
             item.observe(\.presentationSize, options: [.new]) { [weak self] item, _ in
                 Task { @MainActor in
+                    guard let self, item === self.player.currentItem else { return }
                     let size = item.presentationSize
-                    self?.videoSize = size.width > 0 ? size : nil
+                    self.videoSize = size.width > 0 ? size : nil
                 }
             },
         ]
         let center = NotificationCenter.default
         notificationTokens = [
-            center.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: item, queue: .main) { [weak self] _ in
+            center.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: item, queue: .main) { [weak self, weak item] _ in
                 MainActor.assumeIsolated {
-                    self?.state = .ended
-                    self?.onEnded?()
+                    guard let self, let item, item === self.player.currentItem else { return }
+                    self.state = .ended
+                    self.onEnded?()
                 }
             },
-            center.addObserver(forName: AVPlayerItem.failedToPlayToEndTimeNotification, object: item, queue: .main) { [weak self] note in
+            center.addObserver(forName: AVPlayerItem.failedToPlayToEndTimeNotification, object: item, queue: .main) { [weak self, weak item] note in
                 let error = note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error
-                MainActor.assumeIsolated { self?.fail(error?.localizedDescription ?? "播放中断") }
+                MainActor.assumeIsolated {
+                    guard let self, let item, item === self.player.currentItem else { return }
+                    self.fail(error?.localizedDescription ?? "播放中断")
+                }
             },
         ]
     }
@@ -141,24 +157,29 @@ final class ReplayPlayer {
             let seconds = item.duration.seconds
             if seconds.isFinite, seconds > 0 { duration = seconds }
             guard state == .loading else { return }
-            let start = pendingStart
-            let finish: () -> Void = { [weak self] in
-                guard let self, self.state == .loading else { return }
-                self.seekTarget = nil
-                self.state = .paused
-                if self.pendingAutoplay { self.play() }
-            }
-            if start > 1 {
-                player.seek(to: Self.time(start), toleranceBefore: .zero, toleranceAfter: .zero) { _ in
-                    Task { @MainActor in finish() }
-                }
-            } else {
-                finish()
-            }
+            seekToPendingStart(item)
         case .failed:
             fail(item.error?.localizedDescription ?? "无法播放这段录像")
         default:
             break
+        }
+    }
+
+    private func seekToPendingStart(_ item: AVPlayerItem) {
+        let start = duration > 0 ? min(pendingStart, max(0, duration - 0.5)) : pendingStart
+        let token = itemGeneration
+        seekGeneration += 1
+        let seekToken = seekGeneration
+        player.seek(to: Self.time(start), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self, weak item] finished in
+            Task { @MainActor in
+                guard let self, let item, finished, self.itemGeneration == token,
+                      self.seekGeneration == seekToken, item === self.player.currentItem,
+                      self.state == .loading else { return }
+                self.seekTarget = nil
+                self.currentTime = start
+                self.state = .paused
+                if self.pendingAutoplay { self.play() }
+            }
         }
     }
 
@@ -173,12 +194,20 @@ final class ReplayPlayer {
 
     func play() {
         guard player.currentItem != nil else { return }
+        pendingAutoplay = true
+        if sceneBackgrounded, !backgroundAudioAllowed, !isPiPActive {
+            resumeAfterBackground = true
+            return
+        }
+        guard state != .loading else { return }
         if state == .ended { seek(to: 0) }
         player.playImmediately(atRate: rate)
         syncState()
     }
 
     func pause() {
+        pendingAutoplay = false
+        resumeAfterBackground = false
         player.pause()
         syncState()
     }
@@ -188,8 +217,8 @@ final class ReplayPlayer {
     }
 
     func seek(to target: TimeInterval) {
-        guard player.currentItem != nil else { return }
-        let upper = duration > 0 ? max(0, duration - 0.5) : target
+        guard player.currentItem != nil, target.isFinite else { return }
+        let upper = duration > 0 ? max(0, duration - 0.5) : max(0, target)
         let clamped = min(max(0, target), upper)
         seekTarget = clamped
         currentTime = clamped
@@ -197,12 +226,16 @@ final class ReplayPlayer {
         if state == .loading {
             // 还没就绪：改写起播位置，就绪后一次到位
             pendingStart = clamped
+            if let item = player.currentItem, item.status == .readyToPlay { seekToPendingStart(item) }
             return
         }
         if state == .ended { state = .paused }
+        seekGeneration += 1
+        let seekToken = seekGeneration
+        let token = itemGeneration
         player.seek(to: Self.time(clamped), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
             Task { @MainActor in
-                guard let self, finished, self.seekTarget == clamped else { return }
+                guard let self, finished, self.itemGeneration == token, self.seekGeneration == seekToken else { return }
                 self.seekTarget = nil
                 self.currentTime = self.player.currentTime().seconds.isFinite ? self.player.currentTime().seconds : clamped
             }
@@ -240,9 +273,13 @@ final class ReplayPlayer {
     }
 
     private func clearItem() {
+        itemGeneration += 1
+        seekGeneration += 1
         #if os(iOS)
-        if let videoOutput { player.currentItem?.remove(videoOutput) }
-        videoOutput = nil
+        // Return to the system player layer while the new item gets ready.
+        // The compositor must not keep painting the preceding item's last frame.
+        if isPiPActive { pip?.contentSource = AVPictureInPictureController.ContentSource(playerLayer: playerLayer) }
+        stopComposite()
         #endif
         itemObservations.removeAll()
         notificationTokens.forEach { NotificationCenter.default.removeObserver($0) }
@@ -255,8 +292,13 @@ final class ReplayPlayer {
     func shutdown() {
         guard !isShutDown else { return }
         isShutDown = true
+        backgroundTask?.cancel()
+        backgroundTask = nil
+        pip?.delegate = nil
         pip?.stopPictureInPicture()
         pip = nil
+        pipDelegate = nil
+        isPiPActive = false
         #if os(macOS)
         floating.stop()
         #else
@@ -285,10 +327,45 @@ final class ReplayPlayer {
     /// iOS 进入后台时，带视频图层的 AVPlayer 会被系统暂停。
     /// 允许后台播放时先把图层摘掉，回到前台再挂回去。
     func setBackgrounded(_ backgrounded: Bool, keepAudio: Bool) {
+        sceneBackgrounded = backgrounded
+        backgroundAudioAllowed = keepAudio
+        reconcileBackground()
+    }
+
+    private func reconcileBackground() {
+        backgroundTask?.cancel()
+        backgroundTask = nil
+        guard !isShutDown else { return }
+        if !sceneBackgrounded || isPiPActive {
         #if os(iOS)
-        if backgrounded, keepAudio, !isPiPActive { playerLayer.player = nil }
-        else if !backgrounded { playerLayer.player = player }
+            playerLayer.player = player
         #endif
+            if resumeAfterBackground {
+                resumeAfterBackground = false
+                play()
+            }
+            return
+        }
+        // Match live playback's grace period for automatic PiP's willStart.
+        backgroundTask = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
+            guard let self, !self.isShutDown, self.sceneBackgrounded, !self.isPiPActive else { return }
+            if self.backgroundAudioAllowed {
+                #if os(iOS)
+                self.playerLayer.player = nil
+                #endif
+                if self.resumeAfterBackground {
+                    self.resumeAfterBackground = false
+                    self.play()
+                }
+            } else {
+                self.resumeAfterBackground = self.resumeAfterBackground || self.isPlaying
+                    || (self.state == .loading && self.pendingAutoplay)
+                self.pendingAutoplay = false
+                self.player.pause()
+                self.syncState()
+            }
+        }
     }
 
     // MARK: 画中画
@@ -314,7 +391,7 @@ final class ReplayPlayer {
         guard Self.isPiPSupported, playerLayer.superlayer != nil else { return }
         if pip == nil, let controller = AVPictureInPictureController(playerLayer: playerLayer) {
             let delegate = ReplayPiPDelegate { [weak self] active in
-                guard let self else { return }
+                guard let self, !self.isShutDown else { return }
                 self.isPiPActive = active
                 if active { self.refreshPiPDanmaku() }
                 else {

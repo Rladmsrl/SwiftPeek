@@ -29,14 +29,14 @@ The project is still evolving. Feedback from actual playback, background transit
 
 ## Downloads and privacy
 
-The current release is **[0.8.1 (15)](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.1)** for both platforms.
+The latest iOS release is **[0.8.2 (16)](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.2)**, fixing video stutter with PiP danmaku enabled. The latest macOS download remains **[0.8.1 (15)](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.1)**.
 
 | Platform | Download | Requirements and installation |
 | --- | --- | --- |
 | macOS | [Universal ZIP](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.1/SwiftPeek-0.8.1-macOS-universal.zip) | macOS 26+; arm64 and x86_64; extract and move the app to Applications |
-| iPhone / iPad | [Unsigned IPA](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.1/SwiftPeek-0.8.1-iOS-unsigned.ipa) | iOS / iPadOS 26+, arm64; sign with your own identity before sideloading; cannot be installed directly |
+| iPhone / iPad | [Unsigned IPA](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.2/SwiftPeek-0.8.2-iOS-unsigned.ipa) | iOS / iPadOS 26+, arm64; sign with your own identity before sideloading; cannot be installed directly |
 
-[Matching source](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.1/SwiftPeek-0.8.1-source.zip) · [SHA-256 checksums](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.1/SHA256SUMS.txt)
+iOS: [Matching source](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.2/SwiftPeek-0.8.2-source.zip) · [SHA-256 checksums](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.2/SHA256SUMS.txt). For macOS source and checksums, see the [0.8.1 release](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.1).
 
 The Mac app is ad-hoc signed and has not been notarized with Developer ID. Gatekeeper may block the first launch; after checking the source and checksum, follow the system prompts in System Settings → Privacy & Security to allow this app. The Intel slice is cross-compiled; it has not been tested on Intel hardware or a Mac running macOS 26.
 

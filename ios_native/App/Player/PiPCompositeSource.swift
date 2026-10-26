@@ -17,6 +17,8 @@ final class PiPCompositeSource {
     private var running = false
     private var ready = false
     private var lastFrame: CVPixelBuffer?
+    private var lastSourceID: String?
+    private var lastClearToken: Int?
 
     init() {
         var timebase: CMTimebase?
@@ -41,6 +43,11 @@ final class PiPCompositeSource {
     private func capture(generation token: Int) {
         guard running, generation == token else { return }
         guard let snapshot = snapshot?() else { pump.submit(nil, generation: token); return }
+        if snapshot.sourceID != lastSourceID || snapshot.clearToken != lastClearToken {
+            lastFrame = nil
+            lastSourceID = snapshot.sourceID
+            lastClearToken = snapshot.clearToken
+        }
         if let fresh = frame?() { lastFrame = fresh }
         if layer.superlayer == nil, let parent = parent?() {
             // The original inline video stays in front; AVKit mirrors this source.
@@ -67,6 +74,8 @@ final class PiPCompositeSource {
         pump.stop()
         layer.removeFromSuperlayer()
         lastFrame = nil
+        lastSourceID = nil
+        lastClearToken = nil
         ready = false
     }
 
