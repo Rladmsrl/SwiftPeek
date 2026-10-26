@@ -62,6 +62,8 @@ struct RoomView: View {
         .toolbar(isFullscreen ? .hidden : .visible, for: .navigationBar, .tabBar)
         .statusBarHidden(isFullscreen)
         .persistentSystemOverlays(isFullscreen ? .hidden : .automatic)
+        // 横屏全屏时顶栏贴着屏幕上沿，先让给按钮，系统手势需要再划一次
+        .defersSystemGestures(on: isFullscreen ? .vertical : [])
         .toolbar {
             // 标题和符号同时提供，系统可用于横向栏、侧边栏和溢出菜单。
             ToolbarItem(placement: .topBarTrailing) {
@@ -216,9 +218,7 @@ struct RoomView: View {
                     exitFullscreen()
                 } label: {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 14, weight: .semibold))
                 }
-                .buttonBorderShape(.circle)
                 .accessibilityLabel("退出全屏")
 
                 VStack(alignment: .leading, spacing: 1) {
@@ -242,16 +242,13 @@ struct RoomView: View {
                     Image(systemName: player.videoGravity == .resizeAspect
                           ? "rectangle.arrowtriangle.2.outward"
                           : "rectangle.arrowtriangle.2.inward")
-                        .font(.system(size: 13))
                 }
-                .buttonBorderShape(.circle)
                 .accessibilityLabel(player.videoGravity == .resizeAspect ? "填充画面" : "适应画面")
             }
-            .buttonStyle(.glass)
-            .controlSize(.small)
+            .buttonStyle(PlayerControlButtonStyle())
         }
         .padding(.horizontal, 16)
-        .padding(.top, 8)
+        .padding(.top, 12)
     }
 
     private var fullscreenBottomBar: some View {
@@ -271,11 +268,8 @@ struct RoomView: View {
             resetControlsTimer()
         } label: {
             Image(systemName: isLocked ? "lock.fill" : "lock.open")
-                .font(.system(size: 14))
         }
-        .buttonStyle(.glass)
-        .buttonBorderShape(.circle)
-        .controlSize(.small)
+        .buttonStyle(PlayerControlButtonStyle())
         .accessibilityLabel(isLocked ? "解锁屏幕" : "锁定屏幕")
     }
 
@@ -407,7 +401,9 @@ struct RoomView: View {
                 } label: {
                     Label("播放选项", systemImage: "ellipsis")
                         .labelStyle(.iconOnly)
+                        .playerControlChrome()
                 }
+                .buttonStyle(.plain)
                 .accessibilityLabel("播放选项")
             }
             Spacer(minLength: 0)
@@ -415,14 +411,12 @@ struct RoomView: View {
             if expanded { pipButton }
             if showsFullscreen {
                 Button { enterFullscreen() } label: {
-                    Image(systemName: "arrow.up.left.and.arrow.down.right").font(.system(size: 15))
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
                 }
-                .buttonBorderShape(.circle)
                 .accessibilityLabel("全屏")
             }
         }
-        .buttonStyle(.glass)
-        .controlSize(.regular)
+        .buttonStyle(PlayerControlButtonStyle())
     }
 
     // MARK: - 控制条零件（全屏与非全屏共用）
@@ -442,9 +436,7 @@ struct RoomView: View {
             resetControlsTimer()
         } label: {
             Image(systemName: player.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                .font(.system(size: 13))
         }
-        .buttonBorderShape(.circle)
         .accessibilityLabel(player.isMuted ? "取消静音" : "静音")
     }
 
@@ -473,11 +465,10 @@ struct RoomView: View {
                 }
             } label: {
                 Text(store.qualities[safe: store.selectedQualityIndex]?.quality ?? "清晰度")
-                    .font(.caption.weight(.medium))
-                    .lineLimit(1)
-                    .fixedSize()
+                    .font(.subheadline.weight(.medium))
+                    .playerControlChrome()
             }
-            .buttonStyle(.glass)
+            .buttonStyle(.plain)
             .disabled(playback.isWorking)
         }
     }
@@ -490,9 +481,7 @@ struct RoomView: View {
                 resetControlsTimer()
             } label: {
                 Text("线路\(store.currentLineIndex + 1)")
-                    .font(.caption.weight(.medium))
-                    .lineLimit(1)
-                    .fixedSize()
+                    .font(.subheadline.weight(.medium))
             }
             .disabled(playback.isWorking)
         }
@@ -508,9 +497,7 @@ struct RoomView: View {
                 Image(systemName: isPiPActive
                       ? "pip.exit"
                       : "pip.enter")
-                    .font(.system(size: 13))
             }
-            .buttonBorderShape(.circle)
             .disabled(!isPiPActive && !player.isActive)
             .accessibilityLabel(isPiPActive ? "退出画中画" : "画中画")
         }

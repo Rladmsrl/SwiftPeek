@@ -110,6 +110,43 @@ struct PlayerHUDView: View {
     }
 }
 
+// MARK: - 浮层按钮
+
+/// 播放器浮层上的玻璃按钮。视觉与触控区域都不小于 44pt：
+/// 图标是圆形，文字按内容加宽成胶囊。系统 small 玻璃按钮只有约 28pt，
+/// 全屏时贴近屏幕边缘很难点中。
+struct PlayerControlButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.playerControlChrome()
+    }
+}
+
+extension View {
+    /// 菜单不走 ButtonStyle，单独套用同一外观
+    func playerControlChrome() -> some View {
+        modifier(PlayerControlChrome())
+    }
+}
+
+private struct PlayerControlChrome: ViewModifier {
+    static let minimumSide: CGFloat = 44
+    @Environment(\.isEnabled) private var isEnabled
+
+    func body(content: Content) -> some View {
+        content
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(.white)
+            .lineLimit(1)
+            .fixedSize()
+            // 20pt 以内的图标恰好落成 44pt 正圆
+            .padding(.horizontal, 12)
+            .frame(minWidth: Self.minimumSide, minHeight: Self.minimumSide)
+            .contentShape(.capsule)
+            .glassEffect(.regular.interactive(), in: .capsule)
+            .opacity(isEnabled ? 1 : 0.45)
+    }
+}
+
 // MARK: - 手势捕获层
 
 /// 全屏播放手势。

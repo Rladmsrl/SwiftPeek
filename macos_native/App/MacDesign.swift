@@ -112,6 +112,30 @@ struct MacIconButton: View {
     }
 }
 
+/// 播放器控制条上的按钮：点击区域至少 30pt，悬停和按下时有浅色底，
+/// 而不是只有图标那一小块能点中。
+struct MacPlayerButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        MacPlayerButton(configuration: configuration)
+    }
+}
+
+private struct MacPlayerButton: View {
+    let configuration: ButtonStyleConfiguration
+    @State private var hovered = false
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        configuration.label
+            .padding(.horizontal, 7)
+            .frame(minWidth: 30, minHeight: 30)
+            .background(.white.opacity(configuration.isPressed ? 0.2 : hovered && isEnabled ? 0.12 : 0), in: .capsule)
+            .contentShape(.capsule)
+            .opacity(isEnabled ? 1 : 0.4)
+            .onHover { hovered = $0 }
+    }
+}
+
 struct MacEmptyState: View {
     let symbol: String
     let title: String

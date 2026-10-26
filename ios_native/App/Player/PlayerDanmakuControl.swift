@@ -19,24 +19,26 @@ struct PlayerDanmakuControl: View {
         #endif
     }
 
+    private var isCompact: Bool { controlHeight < 44 }
+
     var body: some View {
         HStack(spacing: 0) {
             Button {
                 isVisible.toggle()
                 onToggle()
             } label: {
-                Text("弹幕").font(.system(size: 11, weight: .medium))
+                Text("弹幕").font(.system(size: isCompact ? 11 : 14, weight: .semibold))
                     .foregroundStyle(.white.opacity(isVisible ? 1 : 0.45))
                     .frame(width: max(36, controlHeight), height: controlHeight).contentShape(.rect)
             }
             .accessibilityLabel(isVisible ? "隐藏弹幕" : "显示弹幕")
             .accessibilityValue(isVisible ? "已开启" : "已关闭")
-            Rectangle().fill(.white.opacity(0.18)).frame(width: 1, height: 12)
+            Rectangle().fill(.white.opacity(0.18)).frame(width: 1, height: isCompact ? 12 : 16)
                 .accessibilityHidden(true)
             Button { isPresented = true } label: {
-                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
+                Image(systemName: "chevron.down").font(.system(size: isCompact ? 8 : 11, weight: .bold))
                     .foregroundStyle(.white.opacity(0.8))
-                    .frame(width: controlHeight == 30 ? 24 : 44, height: controlHeight).contentShape(.rect)
+                    .frame(width: isCompact ? 24 : 44, height: controlHeight).contentShape(.rect)
             }
             .accessibilityLabel("弹幕设置")
             .help("字体、字号、可见度与画中画弹幕")
@@ -95,11 +97,13 @@ private struct PlayerDanmakuPanel: View {
                     }
                     Spacer()
                     Button(action: close) {
-                        Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.secondary).frame(width: 28, height: 28)
+                        Image(systemName: "xmark").font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.secondary).frame(width: 30, height: 30)
                             .background(.primary.opacity(0.06), in: .circle)
-                            .contentShape(.circle)
-                    }.buttonStyle(.plain).accessibilityLabel("关闭弹幕设置")
+                            // 视觉保持小圆，点击区域放大到 44pt
+                            .frame(width: 44, height: 44)
+                            .contentShape(.rect)
+                    }.buttonStyle(.plain).padding(-7).accessibilityLabel("关闭弹幕设置")
                 }
 
                 preview

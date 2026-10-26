@@ -101,7 +101,10 @@ struct MacLibraryView: View {
                         .contentShape(.interaction, Capsule())
                 }.buttonStyle(.plain).glassEffect(.regular.interactive(), in: .capsule)
                 Spacer()
-                Button(action: MacDiagnostics.reveal) { Image(systemName: "doc.text.magnifyingglass").font(.system(size: 13)) }
+                Button(action: MacDiagnostics.reveal) {
+                    Image(systemName: "doc.text.magnifyingglass").font(.system(size: 13))
+                        .frame(width: 30, height: 30).contentShape(.rect)
+                }
                     .buttonStyle(.plain).foregroundStyle(.secondary).help("打开播放日志")
             }.padding(.horizontal, 8)
         }.padding(.horizontal, 14).padding(.bottom, 22)
@@ -159,8 +162,11 @@ struct MacLibraryView: View {
                 if query.isEmpty {
                     Text("⌘ F").font(.system(size: 10)).foregroundStyle(.tertiary)
                 } else {
-                    Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
-                        .buttonStyle(.plain).accessibilityLabel("清空搜索")
+                    Button { query = "" } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                            .frame(width: 26, height: 26).contentShape(.rect)
+                    }
+                        .buttonStyle(.plain).padding(.trailing, -6).accessibilityLabel("清空搜索")
                 }
             }.padding(.horizontal, 14).frame(width: 286, height: 38)
                 .glassEffect(.regular, in: .capsule)

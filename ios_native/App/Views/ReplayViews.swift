@@ -184,6 +184,7 @@ struct ReplayView: View {
         .toolbar(isFullscreen ? .hidden : .visible, for: .navigationBar, .tabBar)
         .statusBarHidden(isFullscreen)
         .persistentSystemOverlays(isFullscreen ? .hidden : .automatic)
+        .defersSystemGestures(on: isFullscreen ? .vertical : [])
         .toolbar {
             if let roomID {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -315,9 +316,9 @@ struct ReplayView: View {
             HStack(spacing: 10) {
                 if fullscreen {
                     Button { exitFullscreen() } label: {
-                        Image(systemName: "chevron.left").font(.system(size: 14, weight: .semibold))
+                        Image(systemName: "chevron.left")
                     }
-                    .buttonStyle(.glass).buttonBorderShape(.circle)
+                    .buttonStyle(PlayerControlButtonStyle())
                     .accessibilityLabel("退出全屏")
                     VStack(alignment: .leading, spacing: 1) {
                         Text(detail?.title ?? "录像").font(.footnote.weight(.semibold)).lineLimit(1)
@@ -328,7 +329,6 @@ struct ReplayView: View {
                 Spacer(minLength: 0)
                 topButtons
             }
-            .controlSize(.small)
             Spacer(minLength: 0)
             if showsTransport {
                 HStack(spacing: fullscreen ? 56 : 36) {
@@ -347,15 +347,21 @@ struct ReplayView: View {
                         .foregroundStyle(.white)
                     Spacer()
                     if let next = session.nextSegment, fullscreen {
-                        Button("下一段", systemImage: "forward.end.fill") { session.open(hashID: next.hashID, start: 0) }
-                            .font(.caption2.weight(.medium)).foregroundStyle(.white)
-                            .padding(.trailing, 8)
+                        Button { session.open(hashID: next.hashID, start: 0) } label: {
+                            Label("下一段", systemImage: "forward.end.fill")
+                                .font(.footnote.weight(.medium)).foregroundStyle(.white)
+                                .frame(minHeight: 44).padding(.horizontal, 8).contentShape(.rect)
+                        }
+                        .buttonStyle(.plain)
                     }
+                    // 贴着进度条，不加玻璃底；热区仍保证 44pt
                     Button { fullscreen ? exitFullscreen() : enterFullscreen() } label: {
                         Image(systemName: fullscreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
-                            .font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
-                            .frame(width: 32, height: 28).contentShape(.rect)
+                            .font(.system(size: 16, weight: .semibold)).foregroundStyle(.white)
+                            .frame(width: 44, height: 44).contentShape(.rect)
                     }
+                    .buttonStyle(.plain)
+                    .padding(.trailing, -10)
                     .accessibilityLabel(fullscreen ? "退出全屏" : "全屏")
                 }
                 ReplayScrubber(time: player.displayTime, duration: session.duration, buffered: player.bufferedTime,
@@ -367,7 +373,7 @@ struct ReplayView: View {
             }
         }
         .padding(.horizontal, fullscreen ? 20 : 12)
-        .padding(.top, fullscreen ? 8 : 10)
+        .padding(.top, fullscreen ? 12 : 10)
         .padding(.bottom, fullscreen ? 6 : 2)
         .background {
             VStack(spacing: 0) {
@@ -408,17 +414,18 @@ struct ReplayView: View {
                     }
                 } label: {
                     Text(player.rate == 1 ? (session.currentQuality?.name ?? "设置") : speedName(Double(player.rate)))
-                        .font(.caption.weight(.medium)).lineLimit(1).fixedSize()
+                        .font(.subheadline.weight(.medium))
+                        .playerControlChrome()
                 }
+                .buttonStyle(.plain)
                 if ReplayPlayer.isPiPSupported {
                     Button { player.togglePiP() } label: {
-                        Image(systemName: player.isPiPActive ? "pip.exit" : "pip.enter").font(.system(size: 13))
+                        Image(systemName: player.isPiPActive ? "pip.exit" : "pip.enter")
                     }
-                    .buttonBorderShape(.circle)
                     .accessibilityLabel("画中画")
                 }
             }
-            .buttonStyle(.glass)
+            .buttonStyle(PlayerControlButtonStyle())
         }
     }
 
@@ -500,6 +507,7 @@ struct ReplayView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                             Spacer(minLength: 0)
                         }
+                        .contentShape(.rect)
                     }
                     .buttonStyle(.plain)
                     .id(item.id)

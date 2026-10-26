@@ -277,17 +277,18 @@ struct MacReplayView: View {
                 controlRow(expanded: false)
             }
         }
-        .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 12)
+        .padding(.horizontal, 10).padding(.top, 12).padding(.bottom, 10)
         .glassEffect(.regular, in: .rect(cornerRadius: 22))
         .environment(\.colorScheme, .dark)
         .contentShape(.rect(cornerRadius: 22))
-        .onTapGesture {}  // 点到控制条空白处不触发画面的播放 / 暂停
+        .onTapGesture(count: 2) {}  // 点到控制条空白处既不暂停也不切换全屏
+        .onTapGesture {}
         .padding(14)
         .disabled(session.phase != .loaded)
     }
 
     private func controlRow(expanded: Bool) -> some View {
-        HStack(spacing: expanded ? 16 : 12) {
+        HStack(spacing: expanded ? 8 : 4) {
             Button { player.togglePlay() } label: {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").font(.system(size: 15)).frame(width: 20)
             }.help("播放 / 暂停（空格）")
@@ -314,6 +315,7 @@ struct MacReplayView: View {
                 }
             } label: { Text(player.rate == 1 ? "倍速" : speedName(player.rate)).font(.system(size: 11, weight: .medium)).monospacedDigit() }
                 .menuStyle(.borderlessButton).fixedSize().help("播放速度")
+                .padding(.horizontal, 6)
             Menu {
                 ForEach(Array(session.qualities.enumerated()), id: \.element.id) { index, quality in
                     Button { session.chooseQuality(index) } label: {
@@ -323,6 +325,7 @@ struct MacReplayView: View {
                 }
             } label: { Text(session.currentQuality?.name ?? "清晰度").font(.system(size: 11, weight: .medium)) }
                 .menuStyle(.borderlessButton).fixedSize().disabled(session.qualities.isEmpty)
+                .padding(.horizontal, 6)
             PlayerDanmakuControl(isVisible: Binding(get: { session.isDanmakuVisible },
                                                     set: { session.isDanmakuVisible = $0 }),
                                  onPresentationChange: { showingDanmakuSettings = $0 })
@@ -332,12 +335,13 @@ struct MacReplayView: View {
             if expanded {
                 Slider(value: Binding(get: { player.volume }, set: { player.volume = $0; player.isMuted = false }), in: 0...1)
                     .frame(width: 70).tint(.white).accessibilityLabel("音量")
+                    .padding(.trailing, 4)
             }
             if ReplayPlayer.isPiPSupported {
                 Button { player.togglePiP() } label: { Image(systemName: player.isPiPActive ? "pip.exit" : "pip.enter") }
                     .help("画中画")
             }
-        }.buttonStyle(.plain).font(.system(size: 13)).foregroundStyle(.white)
+        }.buttonStyle(MacPlayerButtonStyle()).font(.system(size: 13)).foregroundStyle(.white)
     }
 
     private func speedName(_ rate: Float) -> String {

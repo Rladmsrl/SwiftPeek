@@ -372,13 +372,15 @@ struct MacRoomView: View {
             controlRow(expanded: true)
             controlRow(expanded: false)
         }
-        .padding(.horizontal, 16).padding(.vertical, 12)
+        .padding(.horizontal, 10).padding(.vertical, 12)
         .glassEffect(.regular, in: .capsule)
         .environment(\.colorScheme, .dark)
+        .contentShape(.capsule)
+        .onTapGesture(count: 2) {}  // 双击控制条空白处不切换全屏
     }
 
     private func controlRow(expanded: Bool) -> some View {
-        HStack(spacing: expanded ? 16 : 12) {
+        HStack(spacing: expanded ? 8 : 4) {
             Button { session.togglePlayback() } label: {
                 Image(systemName: session.player.isActive || session.isWorking ? "pause.fill" : "play.fill")
                     .frame(width: 18)
@@ -389,6 +391,7 @@ struct MacRoomView: View {
             if expanded {
                 Slider(value: Binding(get: { session.player.volume }, set: { session.player.volume = $0 }), in: 0...1)
                     .frame(width: 66).tint(.white).accessibilityLabel("播放器音量")
+                    .padding(.leading, 4)
             }
             Spacer(minLength: 12)
             Menu {
@@ -401,6 +404,7 @@ struct MacRoomView: View {
                     .font(.system(size: 11, weight: .medium))
             }.menuStyle(.borderlessButton).fixedSize()
                 .disabled(session.isWorking || session.store.qualities.isEmpty)
+                .padding(.horizontal, 6)
             if expanded {
                 Button("线路 \(session.store.lineCount == 0 ? 0 : session.store.currentLineIndex + 1)") { session.switchLine() }
                     .font(.system(size: 11, weight: .medium)).disabled(session.store.lineCount < 2 || session.isWorking)
@@ -412,7 +416,7 @@ struct MacRoomView: View {
                 Button { session.pip.toggle() } label: { Image(systemName: session.pipActive ? "pip.exit" : "pip.enter") }
                     .help("画中画").disabled(!session.pipActive && !session.player.isActive)
             }
-        }.buttonStyle(.plain).font(.system(size: 13)).foregroundStyle(.white)
+        }.buttonStyle(MacPlayerButtonStyle()).font(.system(size: 13)).foregroundStyle(.white)
     }
 
     private var bottomBar: some View {
