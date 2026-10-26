@@ -4,6 +4,8 @@ import SimpleLiveKit
 @main
 struct FollowSharingCheck {
     @MainActor static func main() async throws {
+        let legacySettings = try JSONDecoder().decode(SettingsData.self, from: Data("{}".utf8))
+        precondition(!legacySettings.diagnosticsEnabled, "Upgrading must not opt users into diagnostics")
         let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: base) }
         let sender = LibraryStore(storageDirectory: base.appendingPathComponent("sender"))
@@ -70,7 +72,9 @@ struct FollowSharingCheck {
         }
         _ = try receiver.mergeFollows(FollowTransferDocument(rooms: [], history: [watch("1", "本机较新", 100), watch("2", "本机较旧", 0)]), historyLimit: 100)
         _ = try sender.mergeFollows(FollowTransferDocument(rooms: [], history: [watch("1", "远端较旧", 50), watch("2", "远端较新", 60), watch("4", "远端新增", 10)]), historyLimit: 100)
-        let withHistory = try FollowTransferDocument.decode(sender.exportFollows().encoded())
+        let privateExport = try FollowTransferDocument.decode(sender.exportFollows().encoded())
+        precondition(privateExport.historyRecords.isEmpty, "Default share must not disclose history")
+        let withHistory = try FollowTransferDocument.decode(sender.exportFollows(includeHistory: true).encoded())
         precondition(receiver.historyUpdates(from: withHistory).count == 2, "Preview counts only newer history")
         let disabled = try receiver.mergeFollows(withHistory, historyLimit: nil)
         precondition(disabled.history == 0, "History disabled must not import")
@@ -80,6 +84,12 @@ struct FollowSharingCheck {
         precondition(LibraryStore(storageDirectory: receiverDirectory).history.map(\.roomID) == ["1", "2", "4"])
         let repeated = try receiver.mergeFollows(withHistory, historyLimit: 100)
         precondition(repeated.history == 0)
+        try receiver.clearHistory()
+        precondition(receiver.history.isEmpty && LibraryStore(storageDirectory: receiverDirectory).history.isEmpty,
+                     "Clearing history must persist, while keeping follows")
+        precondition(!receiver.follows.isEmpty)
+        do { try broken.clearHistory(); fatalError("Clear failure ignored") }
+        catch { /* Failed persistence must be surfaced to the settings UI. */ }
         let trimmed = LibraryStore(storageDirectory: base.appendingPathComponent("trimmed"))
         let trimmedCount = try trimmed.mergeFollows(withHistory, historyLimit: 2).history
         precondition(trimmedCount == 2 && trimmed.history.map(\.roomID) == ["2", "1"])

@@ -40,7 +40,7 @@ final class HTTPChunkStream: NSObject, @unchecked Sendable {
             self.continuation = continuation
             self.lock.unlock()
 
-            let configuration = self.configuration ?? URLSessionConfiguration.default
+            let configuration = self.configuration ?? URLSessionConfiguration.ephemeral
             // 直播不需要缓存，且缓存会无意义地占用磁盘
             configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
             configuration.urlCache = nil

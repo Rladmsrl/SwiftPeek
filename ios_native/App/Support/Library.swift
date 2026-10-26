@@ -150,12 +150,12 @@ final class LibraryStore {
 
     // MARK: 跨设备关注分享
 
-    func exportFollows() -> FollowTransferDocument {
+    func exportFollows(includeHistory: Bool = false) -> FollowTransferDocument {
         FollowTransferDocument(
             rooms: follows.map {
                 FollowTransferRoom(roomID: $0.roomID, userName: $0.userName, title: $0.title, avatar: $0.avatar)
             },
-            history: history.map {
+            history: (includeHistory ? history : []).map {
                 FollowTransferHistory(roomID: $0.roomID, userName: $0.userName, title: $0.title, cover: $0.cover, watchedAt: $0.watchedAt)
             }
         )
@@ -225,9 +225,10 @@ final class LibraryStore {
         save(history, to: historyURL)
     }
 
-    func clearHistory() {
+    func clearHistory() throws {
+        // Persist before publishing success; clearing must not silently fail.
+        try JSONEncoder().encode([HistoryRecord]()).write(to: historyURL, options: .atomic)
         history.removeAll()
-        save(history, to: historyURL)
     }
 
     /// 设置中调小上限时立即生效

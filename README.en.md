@@ -257,3 +257,9 @@ and all upstream contributors. Thanks also to CryptoJS, Tars, the other open-sou
 Thank you to the **[LINUX DO](https://linux.do/) community** for its discussions and sharing.
 
 **Standing on the shoulders of giants and AI, to make watching live streams a little simpler.**
+
+## Downloads and privacy
+
+[GitHub Releases](https://github.com/Rladmsrl/SwiftPeek/releases) provides a macOS Universal archive (arm64 + x86_64), requiring macOS 27. The Intel slice is cross-compiled and has not been tested on Intel hardware. Releases are ad-hoc signed, not Developer ID notarized; Gatekeeper may block the first launch.
+
+Starting with 0.8.0, follow sharing excludes watch history by default, local diagnostics are opt-in, and settings can clear viewing records and logs. See [privacy details](PRIVACY.md) and [release instructions](docs/releases.md). Both platforms share one version; personal signing profiles are never distributed in public iOS downloads.

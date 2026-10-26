@@ -21,8 +21,10 @@ struct SharedFollows: Transferable {
             }
             let folder = base.appendingPathComponent(UUID().uuidString, isDirectory: true)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: folder.path)
             let file = folder.appendingPathComponent("SwiftPeek 关注.simplelivefollows")
             try data.write(to: file, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
             return SentTransferredFile(file)
         }
     }
@@ -34,16 +36,43 @@ struct FollowTransferActions: View {
     @Environment(LibraryStore.self) private var library
     @Environment(FollowTransferController.self) private var transfer
     @State private var importing = false
+    @State private var sharing = false
+    @State private var includeHistory = false
 
     var body: some View {
         HStack(spacing: 10) {
-            ShareLink(item: SharedFollows(document: library.exportFollows()),
-                      preview: SharePreview("SwiftPeek · \(library.follows.count) 个关注 · \(library.history.count) 条历史",
-                                            image: Image(systemName: "heart.circle"))) {
+            Button {
+                includeHistory = false
+                sharing = true
+            } label: {
                 Label("分享关注", systemImage: "square.and.arrow.up")
             }.disabled(library.follows.isEmpty && library.history.isEmpty)
             Button { importing = true } label: { Label("导入关注", systemImage: "square.and.arrow.down") }
                 .disabled(transfer.isReading)
+        }
+        .sheet(isPresented: $sharing) {
+            VStack(alignment: .leading, spacing: 20) {
+                Text("分享关注").font(.title2.bold())
+                Text("默认只分享关注的主播。文件不包含账号或设置。")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                Toggle("包含观看历史（\(library.history.count) 条）", isOn: $includeHistory)
+                Text("开启后，接收者也能看到你看过的房间和观看时间。导出的文件未加密。")
+                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Button("完成") { sharing = false }
+                    Spacer()
+                    ShareLink(item: SharedFollows(document: library.exportFollows(includeHistory: includeHistory)),
+                              preview: SharePreview(includeHistory ? "SwiftPeek · 关注与观看历史" : "SwiftPeek · 关注",
+                                                    image: Image(systemName: "heart.circle"))) {
+                        Label("选择接收方式", systemImage: "square.and.arrow.up")
+                    }.disabled(library.follows.isEmpty && (!includeHistory || library.history.isEmpty))
+                }
+            }.padding(24)
+            #if os(macOS)
+            .frame(width: 420)
+            #else
+            .presentationDetents([.medium])
+            #endif
         }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.simpleLiveFollows, .json]) { result in
             switch result {

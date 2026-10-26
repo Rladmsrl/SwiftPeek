@@ -13,6 +13,7 @@ struct DiagnosticsTests {
         #expect(text.contains("[URL]"))
         #expect(text.contains("sign=[redacted]"))
         #expect(LiveDiagnostics.redact(String(repeating: "x", count: 2000)).count == 1024)
+        #expect(!LiveDiagnostics.redact("failed /Users/example/Library/file.log").contains("example"))
     }
 
     @Test("轮转有上限且保持每行合法 JSON")
@@ -33,5 +34,13 @@ struct DiagnosticsTests {
         }
         let current = try String(contentsOf: directory.appendingPathComponent("playback.log"), encoding: .utf8)
         #expect(current.contains("49"))
+        // Clearing removes every rotation, permits a new file, and preserves unrelated files.
+        let unrelated = directory.appendingPathComponent("keep.txt")
+        try Data("keep".utf8).write(to: unrelated)
+        try writer.clear()
+        #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path) == ["keep.txt"])
+        writer.append(["event": "after-clear"])
+        let fresh = try String(contentsOf: directory.appendingPathComponent("playback.log"), encoding: .utf8)
+        #expect(fresh.contains("after-clear") && !fresh.contains("heartbeat"))
     }
 }

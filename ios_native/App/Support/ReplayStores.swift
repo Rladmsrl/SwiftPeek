@@ -39,6 +39,11 @@ final class ReplayProgressStore {
         }
     }
 
+    func clear() {
+        entries.removeAll()
+        defaults.removeObject(forKey: Self.storageKey)
+    }
+
     /// 可续播的位置。开头或已看完的不算。
     func resumePosition(for hashID: String) -> TimeInterval? {
         entries[hashID]?.position
@@ -246,7 +251,9 @@ final class ReplaySession {
             phase = .failed("这段录像暂时没有可播放的地址")
             return
         }
-        let position = start ?? ReplayProgressStore.shared.resumePosition(for: source.detail.hashID) ?? 0
+        let savedPosition = settings?.data.historyEnabled == true
+            ? ReplayProgressStore.shared.resumePosition(for: source.detail.hashID) : nil
+        let position = start ?? savedPosition ?? 0
         player.load(url: url, at: position, autoplay: autoplay)
         feed?.reset(at: position)
         LiveDiagnostics.record("replay.open", fields: ["quality": quality.key, "start": String(Int(position))])
@@ -340,6 +347,7 @@ final class ReplaySession {
     }
 
     private func saveProgress(force: Bool) {
+        guard settings?.data.historyEnabled == true else { return }
         guard let hashID, duration > 0, player.state != .loading, player.state != .idle else { return }
         guard force || Date().timeIntervalSince(lastSaved) > 5 else { return }
         lastSaved = Date()

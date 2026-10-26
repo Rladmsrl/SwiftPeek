@@ -1,4 +1,5 @@
 import SwiftUI
+import SimpleLiveKit
 
 private enum SettingsPane: String, CaseIterable, Identifiable {
     case general = "通用", playback = "播放", danmaku = "弹幕", storage = "记录与诊断"
@@ -16,6 +17,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
 struct MacSettingsView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(LibraryStore.self) private var library
+    @State private var privacyError: String?
     @State private var pane: SettingsPane = .general
     @State private var keyword = ""
     @State private var clearHistory = false
@@ -57,8 +59,11 @@ struct MacSettingsView: View {
             }.formStyle(.grouped).scrollContentBackground(.hidden)
         }.frame(width: 620, height: 600)
             .background(MacBackdrop())
-            .confirmationDialog("清空所有观看历史？", isPresented: $clearHistory) {
-                Button("清空", role: .destructive) { library.clearHistory() }
+            .alert("清理未完成", isPresented: Binding(get: { privacyError != nil }, set: { if !$0 { privacyError = nil } })) {
+                Button("好") { privacyError = nil }
+            } message: { Text(privacyError ?? "") }
+            .confirmationDialog("清空观看历史、录像进度和诊断日志？", isPresented: $clearHistory) {
+                Button("清空", role: .destructive) { clearViewingData() }
             }
     }
 
@@ -159,17 +164,32 @@ struct MacSettingsView: View {
                 Picker("最多保留", selection: $settings.data.historyLimit) {
                     ForEach([50, 100, 200, 500], id: \.self) { Text("\($0) 条").tag($0) }
                 }.onChange(of: settings.data.historyLimit) { _, limit in library.trimHistory(to: limit) }
-                Button("清空观看历史", role: .destructive) { clearHistory = true }
-                    .disabled(library.history.isEmpty)
+                Text("历史开关同时控制录像续播记录。清理也会删除本机分享临时文件，保留关注。")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button("清空观看记录与日志", role: .destructive) { clearHistory = true }
+
             }
             Section("播放诊断") {
+                Toggle("记录本地诊断日志", isOn: $settings.data.diagnosticsEnabled)
                 Text("遇到断流时，可以在直播间菜单中记录当前状态，再打开日志文件夹查看。")
                     .font(.system(size: 12)).foregroundStyle(.secondary)
                 Button("打开日志文件夹", action: MacDiagnostics.reveal).buttonStyle(.glass)
-                Text("日志仅保存在本机，自动轮转，最多约 8 MB；不记录完整播放地址或弹幕正文。")
+                Text("默认关闭。开启后记录房间号、时间和播放状态，仅保存在本机，最多约 8 MB。分享前请检查内容。")
                     .font(.system(size: 10)).foregroundStyle(.tertiary)
             }
         }
     }
+    private func clearViewingData() {
+        do {
+            try LiveDiagnostics.clear()
+            let shares = FileManager.default.temporaryDirectory.appendingPathComponent("SimpleLiveFollowShares", isDirectory: true)
+            if FileManager.default.fileExists(atPath: shares.path) { try FileManager.default.removeItem(at: shares) }
+            ReplayProgressStore.shared.clear()
+            try library.clearHistory()
+        } catch {
+            privacyError = "未能清除全部记录，请重试。"
+        }
+    }
+
     private func addKeyword() { settings.addBlockKeyword(keyword); keyword = "" }
 }

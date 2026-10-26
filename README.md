@@ -25,6 +25,12 @@ SwiftPeek 是一个开源的斗鱼第三方客户端，使用 Swift / SwiftUI �
 `reference/` 不参与原生 App 构建，并通过 `.gitattributes` 标记为第三方代码，不计入 GitHub 语言统计。
 项目仍在迭代，持续播放、后台切换与跨设备分享欢迎通过实际使用反馈完善。
 
+## 下载与隐私
+
+[GitHub Releases](https://github.com/Rladmsrl/SwiftPeek/releases) 提供 macOS Universal 包（arm64 + x86_64），最低 macOS 27。Intel 版本已交叉编译，尚无 Intel 真机验证；请确认设备与系统兼容。当前包采用 ad-hoc 签名，未做 Developer ID 公证，首次打开可能被 Gatekeeper 阻止。
+
+0.8.0 起，关注分享默认不包含历史，本地诊断默认关闭，设置可清理观看记录与日志。阅读[隐私说明](PRIVACY.md)和[发布流程](docs/releases.md)。iOS 暂不提供维护者个人签名的 IPA，源码与 macOS 使用相同版本号。
+
 ## iPhone Duo 兼容
 
 SwiftPeek 已适配 iPhone Duo，让斗鱼直播、录像回放和弹幕随折叠屏的可用空间调整：

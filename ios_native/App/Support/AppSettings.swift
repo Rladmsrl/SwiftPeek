@@ -1,4 +1,5 @@
 import Foundation
+import SimpleLiveKit
 import Observation
 import SwiftUI
 
@@ -98,6 +99,7 @@ struct SettingsData: Codable, Equatable {
     // 历史
     var historyEnabled: Bool = true
     var historyLimit: Int = 100
+    var diagnosticsEnabled: Bool = false
 
     init() {}
 
@@ -128,6 +130,7 @@ struct SettingsData: Codable, Equatable {
         blockKeywords = v(.blockKeywords, base.blockKeywords)
         historyEnabled = v(.historyEnabled, base.historyEnabled)
         historyLimit = v(.historyLimit, base.historyLimit)
+        diagnosticsEnabled = v(.diagnosticsEnabled, base.diagnosticsEnabled)
     }
 }
 
@@ -141,6 +144,7 @@ final class AppSettings {
     var data: SettingsData {
         didSet {
             guard data != oldValue else { return }
+            LiveDiagnostics.setEnabled(data.diagnosticsEnabled)
             persist()
         }
     }
@@ -152,6 +156,7 @@ final class AppSettings {
         } else {
             data = SettingsData()
         }
+        LiveDiagnostics.setEnabled(data.diagnosticsEnabled)
     }
 
     private func persist() {

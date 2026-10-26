@@ -8,12 +8,23 @@ public enum LiveDiagnostics {
     private static let queue = DispatchQueue(label: "com.simplelive.diagnostics", qos: .utility)
     private static let run = UUID().uuidString
     private static let writer = DiagnosticWriter(directory: directory)
-    private static let enabled = ProcessInfo.processInfo.environment["SIMPLELIVE_DISABLE_DIAGNOSTICS"] != "1"
+    // Accessed only on queue. Opt in for each installation; never log before settings load.
+    private static var enabled = false
+
+    public static func setEnabled(_ value: Bool) {
+        queue.sync {
+            enabled = value && ProcessInfo.processInfo.environment["SIMPLELIVE_DISABLE_DIAGNOSTICS"] != "1"
+        }
+    }
+
+    public static func clear() throws {
+        try queue.sync { try writer.clear() }
+    }
 
     public static func record(_ event: String, roomID: String? = nil, fields: [String: String] = [:]) {
-        guard enabled else { return }
         let timestamp = Date()
         queue.async {
+            guard enabled else { return }
             var entry = fields.mapValues { redact($0) }
             entry["event"] = redact(event)
             entry["time"] = timestamp.ISO8601Format()
@@ -29,6 +40,7 @@ public enum LiveDiagnostics {
     static func redact(_ value: String) -> String {
         var text = value.replacingOccurrences(of: #"(?i)https?://[^\s\"<>]+"#, with: "[URL]", options: .regularExpression)
         text = text.replacingOccurrences(of: #"(?i)(sign|wsAuth|token|cookie|authorization|did|tt)\s*[=:]\s*[^\s&,;]+"#, with: "$1=[redacted]", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"/(?:Users|home)/[^\s\"<>]+"#, with: "[LOCAL_PATH]", options: .regularExpression)
         return String(text.prefix(1024))
     }
 }
@@ -48,6 +60,15 @@ final class DiagnosticWriter {
 
     private func file(_ index: Int) -> URL {
         directory.appendingPathComponent(index == 0 ? "playback.log" : "playback.\(index).log")
+    }
+
+    func clear() throws {
+        let manager = FileManager.default
+        for index in 0...backups where manager.fileExists(atPath: file(index).path) {
+            try manager.removeItem(at: file(index))
+        }
+        bytes = 0
+        initialized = false
     }
 
     func append(_ entry: [String: String]) {

@@ -77,6 +77,12 @@ struct ReplayCheck {
         precondition(progress.resumePosition(for: "b") == nil, "The first seconds are not worth resuming")
         print("PASS: watch progress resumes, survives reload, and forgets finished videos")
 
+        progress.record(hashID: "private", position: 60, duration: 600)
+        progress.clear()
+        precondition(progress.entries.isEmpty && ReplayProgressStore(defaults: defaults).entries.isEmpty,
+                     "Clear must remove both in-memory and persisted progress")
+        print("PASS: clearing progress removes all persisted viewing records")
+
         let bins = ReplayDanmakuHeat.normalize([0, 0, 9, 0, 0, 36, 0])
         precondition(bins.count == 7 && bins.max() == 1 && bins[0] == 0 && bins[2] > 0)
         precondition(ReplayDanmakuHeat.normalize([0, 0]).allSatisfy { $0 == 0 })

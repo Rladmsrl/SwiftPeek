@@ -1,3 +1,5 @@
+include:
+  - ../shared/version.yml
 name: SimpleLive
 options:
   bundleIdPrefix: com.simplelive
@@ -20,6 +22,8 @@ targets:
         buildPhase: resources
       - path: ../LICENSE
         buildPhase: resources
+      - path: ../PRIVACY.md
+        buildPhase: resources
       - path: ../shared/Branding.xcassets
     dependencies:
       - package: SimpleLiveKit
@@ -28,8 +32,6 @@ targets:
       base:
         PRODUCT_NAME: SwiftPeek
         PRODUCT_BUNDLE_IDENTIFIER: com.simplelive.app
-        MARKETING_VERSION: "0.5.0"
-        CURRENT_PROJECT_VERSION: "13"
         SWIFT_VERSION: "5.0"
         # 支持 iPhone / iPad；布局由容器尺寸和 reserved regions 决定。
         TARGETED_DEVICE_FAMILY: "1,2"
@@ -45,6 +47,8 @@ targets:
       path: App/Support/Info.plist
       properties:
         CFBundleDisplayName: SwiftPeek
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleDocumentTypes:
           - CFBundleTypeName: SwiftPeek 关注
             CFBundleTypeRole: Viewer

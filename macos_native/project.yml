@@ -1,3 +1,5 @@
+include:
+  - ../shared/version.yml
 name: SimpleLiveMac
 options:
   deploymentTarget:
@@ -16,6 +18,8 @@ targets:
         buildPhase: resources
       - path: ../LICENSE
         buildPhase: resources
+      - path: ../PRIVACY.md
+        buildPhase: resources
       - path: ../shared/Branding.xcassets
       - path: ../ios_native/App/Player
       - path: ../ios_native/App/Support/Stores.swift
@@ -32,8 +36,6 @@ targets:
       base:
         PRODUCT_NAME: SwiftPeek
         PRODUCT_BUNDLE_IDENTIFIER: com.simplelive.mac
-        MARKETING_VERSION: '0.5.0'
-        CURRENT_PROJECT_VERSION: '13'
         SWIFT_VERSION: '5.0'
         CODE_SIGN_IDENTITY: '-'
         ENABLE_HARDENED_RUNTIME: YES
@@ -42,6 +44,8 @@ targets:
       path: App/Info.plist
       properties:
         CFBundleDisplayName: SwiftPeek
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleDocumentTypes:
           - CFBundleTypeName: SwiftPeek 关注
             CFBundleTypeRole: Viewer

@@ -1,0 +1,5 @@
+# Both apps use the same release and monotonically increasing build number.
+settings:
+  base:
+    MARKETING_VERSION: '0.8.0'
+    CURRENT_PROJECT_VERSION: '14'

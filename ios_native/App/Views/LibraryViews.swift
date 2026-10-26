@@ -133,6 +133,7 @@ private struct FollowRow: View {
 struct HistoryView: View {
     @Environment(LibraryStore.self) private var library
     @State private var showClearConfirm = false
+    @State private var clearFailed = false
 
     var body: some View {
         content
@@ -145,12 +146,17 @@ struct HistoryView: View {
                 }
             }
             .confirmationDialog(
-                "清空全部观看历史？",
+                "清空列表中的直播观看历史？",
                 isPresented: $showClearConfirm,
                 titleVisibility: .visible
             ) {
-                Button("清空", role: .destructive) { library.clearHistory() }
+                Button("清空", role: .destructive) {
+                    do { try library.clearHistory() } catch { clearFailed = true }
+                }
                 Button("取消", role: .cancel) {}
+            }
+            .alert("未能清空历史，请重试。", isPresented: $clearFailed) {
+                Button("好", role: .cancel) {}
             }
     }
 

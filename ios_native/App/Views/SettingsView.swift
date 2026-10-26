@@ -1,9 +1,11 @@
 import SwiftUI
+import SimpleLiveKit
 
 struct SettingsView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(LibraryStore.self) private var library
 
+    @State private var privacyError: String?
     @State private var newKeyword = ""
     @State private var showResetConfirm = false
 
@@ -92,10 +94,10 @@ struct SettingsView: View {
                         Text("\(limit) 条").tag(limit)
                     }
                 }
-                Button("清空观看历史（\(library.history.count)）", role: .destructive) {
-                    library.clearHistory()
+                Button("清空观看记录与日志", role: .destructive) {
+                    clearViewingData()
                 }
-                .disabled(library.history.isEmpty)
+
                 Button("清空关注（\(library.follows.count)）", role: .destructive) {
                     library.clearFollows()
                 }
@@ -104,10 +106,18 @@ struct SettingsView: View {
                 Text("数据")
             }
 
+            Section("隐私与诊断") {
+                Toggle("记录本地诊断日志", isOn: $settings.data.diagnosticsEnabled)
+                Text("默认关闭。开启后在本机记录房间号、时间和播放状态，最多约 8 MB。分享前请检查内容。历史开关同时控制录像续播记录；清理保留关注，并删除本机分享临时文件。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section {
                 Button("恢复默认设置", role: .destructive) { showResetConfirm = true }
             }
         }
+        .alert("清理未完成", isPresented: Binding(get: { privacyError != nil }, set: { if !$0 { privacyError = nil } })) {
+            Button("好") { privacyError = nil }
+        } message: { Text(privacyError ?? "") }
         .navigationTitle("设置")
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: settings.data.historyLimit) { _, limit in
@@ -121,6 +131,18 @@ struct SettingsView: View {
         ) {
             Button("恢复默认", role: .destructive) { settings.resetToDefaults() }
             Button("取消", role: .cancel) {}
+        }
+    }
+
+    private func clearViewingData() {
+        do {
+            try LiveDiagnostics.clear()
+            let shares = FileManager.default.temporaryDirectory.appendingPathComponent("SimpleLiveFollowShares", isDirectory: true)
+            if FileManager.default.fileExists(atPath: shares.path) { try FileManager.default.removeItem(at: shares) }
+            ReplayProgressStore.shared.clear()
+            try library.clearHistory()
+        } catch {
+            privacyError = "未能清除全部记录，请重试。"
         }
     }
 

@@ -19,3 +19,14 @@
   commit such removals unless the equivalent shared configuration is preserved.
   Do not discard unrelated local changes or hide them with `assume-unchanged` or
   `skip-worktree`.
+
+# Release version policy
+
+- Both apps read `shared/version.yml`. Every published update must increase the
+  marketing version and build number together; use `python3 scripts/bump-version.py`
+  for the next patch or pass an explicit higher version. Never reuse a release tag.
+- Before publishing, run the privacy checks on the final packaged app, include
+  matching source and checksums, and describe signing and architecture limitations.
+- macOS releases use `bash scripts/release-macos.sh` from a clean committed snapshot.
+  Private build logs and staging stay in `.local/`; upload only the reviewed archives
+  and checksums. Personal signed iOS archives must not be public release assets.
