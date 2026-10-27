@@ -5,6 +5,19 @@ import SwiftUI
 
 // MARK: - 枚举选项
 
+enum MultiWatchDanmakuMode: String, CaseIterable, Identifiable, Codable {
+    case off, selected, all
+
+    var id: Self { self }
+    var label: String {
+        switch self {
+        case .off: "关闭"
+        case .selected: "仅主画面"
+        case .all: "所有画面"
+        }
+    }
+}
+
 enum AppearanceMode: String, CaseIterable, Identifiable, Codable {
     case system, light, dark
 
@@ -88,6 +101,7 @@ struct SettingsData: Codable, Equatable {
 
     // 弹幕
     var danmakuVisibleByDefault: Bool = true
+    var multiWatchDanmakuMode: MultiWatchDanmakuMode = .selected
     var danmakuFont: DanmakuFont = .system
     var danmakuFontSize: Double = 16
     var danmakuOpacity: Double = 1.0
@@ -121,6 +135,7 @@ struct SettingsData: Codable, Equatable {
         playerVolume = v(.playerVolume, base.playerVolume)
         showHotBadge = v(.showHotBadge, base.showHotBadge)
         danmakuVisibleByDefault = v(.danmakuVisibleByDefault, base.danmakuVisibleByDefault)
+        multiWatchDanmakuMode = v(.multiWatchDanmakuMode, base.multiWatchDanmakuMode)
         danmakuFont = v(.danmakuFont, base.danmakuFont)
         danmakuFontSize = v(.danmakuFontSize, base.danmakuFontSize)
         danmakuOpacity = v(.danmakuOpacity, base.danmakuOpacity)

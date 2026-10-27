@@ -191,6 +191,21 @@ final class SearchStore {
 
 // MARK: - 直播间
 
+/// Spaced admission, with no backlog or catch-up burst after an idle period.
+struct DanmakuDeliveryLimiter {
+    let messagesPerSecond: Int?
+    private var nextAllowedAt: TimeInterval?
+
+    init(messagesPerSecond: Int? = nil) { self.messagesPerSecond = messagesPerSecond }
+
+    mutating func accept(at time: TimeInterval) -> Bool {
+        guard let limit = messagesPerSecond else { return true }
+        guard limit > 0, time >= (nextAllowedAt ?? time) else { return false }
+        nextAllowedAt = time + 1 / Double(limit)
+        return true
+    }
+}
+
 @MainActor
 @Observable
 final class RoomStore {
@@ -227,6 +242,8 @@ final class RoomStore {
     var messages: [LiveMessage] = []
     var danmakuNotice: String?
     var isDanmakuVisible = true
+    /// A per-room choice made in multi-watch survives metadata reloads.
+    var danmakuVisibilityOverride: Bool?
 
     /// 重连过程中确认主播已下播时置位，供 UI 显示明确原因而不是笼统的连接失败。
     var offlineNotice: String?
@@ -253,6 +270,22 @@ final class RoomStore {
     private var flushTask: Task<Void, Never>?
     private var flushGeneration = 0
     private(set) var danmakuDeliveryEnabled = true
+    private var danmakuLimiter = DanmakuDeliveryLimiter()
+    var danmakuMessagesPerSecond: Int? { danmakuLimiter.messagesPerSecond }
+
+    func setDanmakuDeliveryLimit(_ messagesPerSecond: Int?) {
+        guard danmakuMessagesPerSecond != messagesPerSecond else { return }
+        danmakuLimiter = DanmakuDeliveryLimiter(messagesPerSecond: messagesPerSecond)
+        clearDeliveredDanmaku()
+    }
+
+    private func clearDeliveredDanmaku() {
+        flushGeneration += 1
+        flushTask?.cancel()
+        flushTask = nil
+        pendingMessages.removeAll()
+        messages.removeAll()
+    }
 
     /// A hidden multi-watch room keeps its socket but does not accumulate or
     /// publish message batches. Selection can resume immediately without a login.
@@ -260,11 +293,8 @@ final class RoomStore {
         guard danmakuDeliveryEnabled != enabled else { return }
         danmakuDeliveryEnabled = enabled
         if !enabled {
-            flushGeneration += 1
-            flushTask?.cancel()
-            flushTask = nil
-            pendingMessages.removeAll()
-            messages.removeAll()
+            clearDeliveredDanmaku()
+            danmakuLimiter = DanmakuDeliveryLimiter(messagesPerSecond: danmakuMessagesPerSecond)
         }
     }
 
@@ -286,7 +316,7 @@ final class RoomStore {
     func configure(settings: AppSettings, library: LibraryStore) {
         self.settings = settings
         self.library = library
-        isDanmakuVisible = settings.data.danmakuVisibleByDefault
+        isDanmakuVisible = danmakuVisibilityOverride ?? settings.data.danmakuVisibleByDefault
     }
 
     func load(selection: Selection? = nil) async {
@@ -513,6 +543,7 @@ final class RoomStore {
     /// 约 80ms 合并一次。安静的房间几乎无感，热门房不会每条弹幕都刷新整页。
     private func enqueueDanmaku(_ message: LiveMessage) {
         if settings?.isBlocked(message.message) == true { return }
+        guard danmakuLimiter.accept(at: ProcessInfo.processInfo.systemUptime) else { return }
         pendingMessages.append(message)
         guard flushTask == nil else { return }
         flushGeneration += 1

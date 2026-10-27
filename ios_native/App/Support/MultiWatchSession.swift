@@ -49,6 +49,13 @@ final class MultiWatchSession<Player: MobilePlaybackEngine> {
     var muted = false { didSet { reconcileAudio(); reconcileResources() } }
     var focused = false { didSet { reconcileResources() } }
     var layoutMode: MultiWatchLayout.Mode = .balanced
+    var danmakuMode: MultiWatchDanmakuMode = .selected {
+        didSet {
+            guard danmakuMode != oldValue else { return }
+            settings?.data.multiWatchDanmakuMode = danmakuMode
+            reconcileResources()
+        }
+    }
     private(set) var backgrounded = false
     private(set) var constrained = false
     private var pipID: String?
@@ -65,6 +72,8 @@ final class MultiWatchSession<Player: MobilePlaybackEngine> {
         let room: MultiWatchRoom<Player>
         let preference: QualityPreference?
         let remembersQuality: Bool
+        let danmakuMessagesPerSecond: Int?
+        let danmakuVisibilityOverride: Bool?
     }
     private var origin: Origin?
     var hasOrigin: Bool { origin != nil }
@@ -84,6 +93,7 @@ final class MultiWatchSession<Player: MobilePlaybackEngine> {
     func configure(settings: AppSettings, library: LibraryStore) {
         self.settings = settings
         self.library = library
+        danmakuMode = settings.data.multiWatchDanmakuMode
     }
 
     func present() {
@@ -99,7 +109,10 @@ final class MultiWatchSession<Player: MobilePlaybackEngine> {
         guard rooms.isEmpty, origin == nil else { return }
         let room = MultiWatchRoom(id: id, title: title, playback: playback)
         origin = Origin(room: room, preference: playback.store.qualityPreferenceOverride,
-                        remembersQuality: playback.store.remembersQuality)
+                        remembersQuality: playback.store.remembersQuality,
+                        danmakuMessagesPerSecond: playback.store.danmakuMessagesPerSecond,
+                        danmakuVisibilityOverride: playback.store.danmakuVisibilityOverride)
+        playback.store.danmakuVisibilityOverride = playback.store.isDanmakuVisible
         playback.setManagedByMultiWatch(true)
         playback.store.remembersQuality = false
         rooms = [room]
@@ -107,6 +120,7 @@ final class MultiWatchSession<Player: MobilePlaybackEngine> {
         selectedID = id
         audibleID = playback.player.isMuted ? nil : id
         isRunning = true
+        reconcileResources()
         present()
     }
 
@@ -121,6 +135,7 @@ final class MultiWatchSession<Player: MobilePlaybackEngine> {
         if selectedID == nil { selectedID = id; audibleID = id }
         room.playback.store.qualityPreferenceOverride = preferredQuality(for: room)
         reconcileAudio()
+        reconcileResources()
         if isRunning { scheduleStartup() }
         scheduleQuality()
         return true
@@ -256,6 +271,7 @@ final class MultiWatchSession<Player: MobilePlaybackEngine> {
     func setConstrained(_ value: Bool) {
         guard constrained != value else { return }
         constrained = value
+        reconcileResources()
         scheduleQuality()
     }
 
@@ -263,9 +279,36 @@ final class MultiWatchSession<Player: MobilePlaybackEngine> {
     func setPiP(_ id: String?) { pipID = id; reconcileResources() }
     func refreshSettings() { reconcileResources() }
 
+    func showsDanmaku(for room: MultiWatchRoom<Player>) -> Bool {
+        guard !backgrounded, room.playback.store.isDanmakuVisible else { return false }
+        switch danmakuMode {
+        case .off: return false
+        case .selected: return room.id == selectedID
+        case .all: return room.id == selectedID || (!focused && !constrained)
+        }
+    }
+
+    func danmakuSettings(for room: MultiWatchRoom<Player>) -> DanmakuSettings {
+        var result = room.playback.store.danmakuRenderSettings
+        if danmakuMode == .all {
+            result.areaRatio = min(0.25, result.areaRatio * 0.5)
+            result.gap *= 2
+        }
+        return result
+    }
+
+    func setDanmakuVisible(_ visible: Bool, for room: MultiWatchRoom<Player>) {
+        room.playback.store.danmakuVisibilityOverride = visible
+        room.playback.store.isDanmakuVisible = visible
+        reconcileResources()
+    }
+
     private func reconcileResources() {
         for room in rooms {
-            room.playback.store.setDanmakuDeliveryEnabled((room.id == selectedID && !backgrounded) || room.id == pipID)
+            room.playback.store.setDanmakuDeliveryLimit(danmakuMode == .all ? 3 : nil)
+            let pipDanmaku = room.id == pipID && danmakuMode != .off
+                && room.playback.store.isDanmakuVisible && settings?.data.pictureInPictureDanmaku == true
+            room.playback.store.setDanmakuDeliveryEnabled(showsDanmaku(for: room) || pipDanmaku)
             let audio = !muted && room.id == audibleID
             let backgroundAllowed = room.id == pipID || (audio && settings?.data.backgroundAudio == true)
             let hidden = focused && room.id != selectedID && !audio
@@ -283,6 +326,7 @@ final class MultiWatchSession<Player: MobilePlaybackEngine> {
         startupTask?.cancel(); startupTask = nil
         qualityTask?.cancel(); qualityTask = nil
         let returning = origin
+        let returningMuted = !hasSound
         let wasBackgrounded = backgrounded
         for room in rooms where room.playback !== returning?.room.playback { room.playback.close() }
         if stopOrigin { returning?.room.playback.stopPlayback() }
@@ -297,6 +341,9 @@ final class MultiWatchSession<Player: MobilePlaybackEngine> {
             let playback = returning.room.playback
             playback.store.qualityPreferenceOverride = returning.preference
             playback.store.remembersQuality = returning.remembersQuality
+            playback.player.isMuted = returningMuted
+            playback.store.danmakuVisibilityOverride = returning.danmakuVisibilityOverride
+            playback.store.setDanmakuDeliveryLimit(returning.danmakuMessagesPerSecond)
             playback.store.setDanmakuDeliveryEnabled(true)
             playback.setBackgroundAudio(settings?.data.backgroundAudio ?? false)
             playback.setPictureInPictureActive(false)

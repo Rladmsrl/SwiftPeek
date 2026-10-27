@@ -179,12 +179,14 @@ struct RoomView: View {
             Color.black
             FLVVideoLayerView(player: player, enabled: !multiWatch.owns(playback))
                 .allowsHitTesting(false)
-            DanmakuOverlay(
-                messages: store.messages,
-                settings: store.danmakuRenderSettings,
-                isVisible: store.isDanmakuVisible
-            )
-            .allowsHitTesting(false)
+            if !multiWatch.owns(playback) {
+                DanmakuOverlay(
+                    messages: store.messages,
+                    settings: store.danmakuRenderSettings,
+                    isVisible: store.isDanmakuVisible
+                )
+                .allowsHitTesting(false)
+            }
 
             if isFullscreen {
                 PlayerGestureSurface(

@@ -12,7 +12,7 @@ import CoreGraphics
             let layout = MultiWatchLayout(size: size, count: count, selected: count - 1, mode: mode,
                                           focused: focused, divisions: divisions, occlusions: occlusions)
             verify(layout.tiles.count == count, "Room count changed")
-            let frames = layout.tiles + [layout.companion]
+            let frames = layout.tiles
             for (index, frame) in frames.enumerated() {
                 verify(frame.width >= 0 && frame.height >= 0, "Negative dimensions")
                 verify(frame.minX >= 0 && frame.minY >= 0 && frame.maxX <= size.width + 0.001 && frame.maxY <= size.height + 0.001, "Outside container: \(size), \(frame)")
@@ -54,7 +54,9 @@ import CoreGraphics
         let four = MultiWatchLayout(size: CGSize(width: 374, height: 650), count: 4)
         verify(four.tiles[0].minY == four.tiles[1].minY && four.tiles[2].minY > four.tiles[0].maxY, "Four-up must be a grid")
         let expanded = MultiWatchLayout(size: CGSize(width: 900, height: 600), count: 4)
-        verify(expanded.companion.width >= 240, "Expanded Duo must offer a readable side panel")
+        verify(expanded.tiles.map(\.maxX).max() == 900 && expanded.tiles.map(\.maxY).max() == 600,
+               "Expanded Duo must use the full video area")
+        verify(four.tiles.map(\.maxY).max() == 650, "Phone grid must use the former chat panel area")
         verify(MultiWatchRoomInput.roomID(" https://www.douyu.com/000123?from=share ") == "123", "Room URL normalization")
         verify(MultiWatchRoomInput.roomID("https://example.com/123") == nil, "Reject unrelated links")
         verify(MultiWatchRoomInput.roomID("主播123") == nil, "Search names are not room IDs")

@@ -8,7 +8,6 @@ struct MultiWatchLayout: Equatable {
         var id: Self { self }
     }
     var tiles: [CGRect]
-    var companion: CGRect = .zero
 
     init(size: CGSize, count: Int, selected: Int = 0, mode: Mode = .balanced,
          focused: Bool = false, divisions: [CGRect] = [], occlusions: [CGRect] = []) {
@@ -34,7 +33,6 @@ struct MultiWatchLayout: Equatable {
                 : CGRect(x: available.minX, y: fold.maxY, width: available.width, height: max(0, available.maxY - fold.maxY))
             if focused || count == 1 {
                 tiles[selected] = first
-                companion = second
             } else if book {
                 // Book: a complete room on each leaf; four rooms become two per leaf.
                 let leftCount = (count + 1) / 2
@@ -51,19 +49,7 @@ struct MultiWatchLayout: Equatable {
         } else if focused {
             tiles[selected] = available
         } else {
-            var video = available
-            let roomy = min(available.width, available.height) >= 550
-            if roomy && available.width > available.height {
-                let panel = min(280, available.width * 0.28)
-                video.size.width = max(0, available.width - panel - 8)
-                companion = CGRect(x: video.maxX + 8, y: available.minY, width: panel, height: available.height)
-            } else if available.height > available.width * 1.1 {
-                let rows: CGFloat = count <= 2 ? CGFloat(count) : (count == 3 || mode == .stage ? 1.5 : 1)
-                let height = min(available.height * 0.70, available.width * 9 / 16 * rows + (count > 1 ? 88 : 44))
-                video.size.height = height
-                companion = CGRect(x: available.minX, y: video.maxY + 8, width: available.width,
-                                   height: max(0, available.maxY - video.maxY - 8))
-            }
+            let video = available
             if count >= 3 && (mode == .stage || count == 3) {
                 let sideways = video.width > video.height * 1.25
                 let main: CGRect
@@ -85,7 +71,6 @@ struct MultiWatchLayout: Equatable {
             }
         }
         tiles = tiles.map { Self.avoiding(occlusions + divisions, in: $0) }
-        companion = Self.avoiding(occlusions + divisions, in: companion)
     }
 
     private static func grid(_ rect: CGRect, count: Int, columns: Int) -> [CGRect] {

@@ -175,6 +175,95 @@ struct MobilePlaybackCheck {
         pausedSession.close()
         print("PASS: backgrounding an autoplay-off room does not strand its metadata load")
         try await checkMultiWatch()
+        try await checkMultiWatchDanmaku()
+    }
+
+    @MainActor private static func checkMultiWatchDanmaku() async throws {
+        var limiter = DanmakuDeliveryLimiter(messagesPerSecond: 3)
+        precondition(limiter.accept(at: 0))
+        for _ in 0..<1000 { precondition(!limiter.accept(at: 0.1), "Burst escaped the admission limit") }
+        precondition(limiter.accept(at: 0.34))
+        precondition(limiter.accept(at: 0.68))
+        precondition(!limiter.accept(at: 0.99))
+        precondition(limiter.accept(at: 100))
+        precondition(!limiter.accept(at: 100), "Idle time accumulated a catch-up burst")
+        var unrestricted = DanmakuDeliveryLimiter()
+        for _ in 0..<1000 { precondition(unrestricted.accept(at: 0), "Primary-only delivery was throttled") }
+
+        let settings = AppSettings()
+        let saved = settings.data
+        defer { settings.data = saved }
+        settings.data.multiWatchDanmakuMode = .selected
+        settings.data.danmakuVisibleByDefault = true
+        settings.data.pictureInPictureDanmaku = true
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let library = LibraryStore(storageDirectory: directory)
+        let multi = MultiWatchSession(makePlayer: { FakeMobilePlayer() }, site: FakeSite())
+        multi.configure(settings: settings, library: library)
+        for id in ["1", "2", "3", "4"] { multi.add(id: id, title: id) }
+        let identities = multi.rooms.map { ObjectIdentifier($0.playback.player) }
+        func delivering() -> [String] { multi.rooms.filter { $0.playback.store.danmakuDeliveryEnabled }.map(\.id) }
+        precondition(delivering() == ["1"])
+        precondition(multi.rooms.allSatisfy { $0.playback.store.danmakuMessagesPerSecond == nil })
+        let regular = multi.danmakuSettings(for: multi.rooms[0])
+        multi.danmakuMode = .all
+        precondition(delivering() == ["1", "2", "3", "4"])
+        precondition(multi.rooms.allSatisfy { $0.playback.store.danmakuMessagesPerSecond == 3 })
+        precondition(multi.danmakuSettings(for: multi.rooms[0]).areaRatio < regular.areaRatio)
+        precondition(multi.danmakuSettings(for: multi.rooms[0]).gap > regular.gap)
+        multi.setDanmakuVisible(false, for: multi.rooms[1])
+        precondition(delivering() == ["1", "3", "4"])
+        multi.setDanmakuVisible(true, for: multi.rooms[1])
+        multi.focused = true
+        precondition(delivering() == ["1"], "Hidden tiles kept publishing chat")
+        multi.focused = false
+        multi.setConstrained(true)
+        precondition(delivering() == ["1"], "All-room mode did not shed secondary overlays under pressure")
+        multi.setConstrained(false)
+        precondition(delivering().count == 4)
+        multi.setPiP("2")
+        multi.setBackgrounded(true)
+        precondition(delivering() == ["2"])
+        multi.danmakuMode = .off
+        precondition(delivering().isEmpty)
+        multi.setBackgrounded(false)
+        multi.setPiP(nil)
+        precondition(delivering().isEmpty)
+        multi.danmakuMode = .selected
+        multi.select("3")
+        multi.setConstrained(true)
+        precondition(delivering() == ["3"])
+        precondition(multi.rooms.allSatisfy { $0.playback.store.danmakuMessagesPerSecond == nil })
+        precondition(multi.danmakuSettings(for: multi.rooms[2]) == regular, "Primary-only density changed")
+        precondition(multi.rooms.map { ObjectIdentifier($0.playback.player) } == identities)
+        multi.setConstrained(false)
+        multi.finish()
+
+        let original = MobileRoomPlaybackSession(roomID: "original", player: FakeMobilePlayer(), site: FakeSite())
+        original.open(settings: settings, library: library, autoPlay: true)
+        await original.waitUntilLoaded()
+        multi.begin(from: original, id: "original", title: "Original")
+        multi.danmakuMode = .all
+        multi.setDanmakuVisible(false, for: multi.rooms[0])
+        let previousStore = original.store
+        original.store.detail = nil
+        original.play()
+        await original.waitUntilLoaded()
+        precondition(original.store !== previousStore)
+        precondition(!original.store.isDanmakuVisible && !original.store.danmakuDeliveryEnabled,
+                     "Metadata retry lost the per-room danmaku opt-out")
+        precondition(original.store.danmakuMessagesPerSecond == 3)
+        multi.finish()
+        precondition(original.store.danmakuMessagesPerSecond == nil && original.store.danmakuDeliveryEnabled,
+                     "Returning to single-room playback retained multi-watch throttling")
+        precondition(original.store.danmakuVisibilityOverride == nil)
+        original.close()
+        let persisted = try JSONDecoder().decode(SettingsData.self, from: JSONEncoder().encode(settings.data))
+        precondition(persisted.multiWatchDanmakuMode == .all)
+        let legacy = try JSONDecoder().decode(SettingsData.self, from: Data("{}".utf8))
+        precondition(legacy.multiWatchDanmakuMode == .selected)
+        print("PASS: three danmaku modes, per-room opt-out, bounded admission without bursts, pressure/focus/background and unthrottled single-room return")
     }
 
     @MainActor private static func checkMultiWatch() async throws {
@@ -263,11 +352,20 @@ struct MobilePlaybackCheck {
                      "Adding a room interrupted the existing stream")
         precondition(original.store.selectedQualityIndex == originalQuality, "Entry changed original quality")
         let extra = multi.rooms[1].playback.player
+        multi.select("extra")
+        precondition(originalPlayer.isMuted && !extra.isMuted)
         multi.finish()
         precondition(!extra.isActive && originalPlayer.isActive && !multi.owns(original))
+        precondition(!originalPlayer.isMuted, "Returning from another audible room left the original muted")
         precondition(originalPlayer.starts == originalStarts && originalPlayer.stops == originalStops,
                      "Returning to the original player reconnected it")
         precondition(original.store.remembersQuality && original.store.qualityPreferenceOverride == nil)
+
+        multi.begin(from: original, id: "original", title: "Original")
+        multi.toggleAllSound()
+        multi.finish()
+        precondition(originalPlayer.isMuted, "Returning from multi-watch undid an explicit mute")
+        originalPlayer.isMuted = false
 
         original.stopPlayback()
         multi.begin(from: original, id: "original", title: "Original")

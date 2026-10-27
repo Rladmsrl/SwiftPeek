@@ -238,9 +238,7 @@ struct MineView: View {
 
                 Section("关于") {
                     LabeledContent("应用", value: "SwiftPeek")
-                    LabeledContent("站点", value: Sites.douyu.name)
                     LabeledContent("版本", value: Self.appVersion)
-                    LabeledContent("解码", value: "自研 FLV + VideoToolbox 硬解")
                 }
             }
             .navigationTitle("我的")

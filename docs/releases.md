@@ -2,10 +2,10 @@
 
 ## 版本
 
-两端只从 `shared/version.yml` 读取版本。当前源码及 iOS 发布为 0.8.2 (16)，macOS 安装包仍为 0.8.1 (15)。每次发布递增版本和 build：
+两端只从 `shared/version.yml` 读取版本。当前源码及 iOS 发布为 0.8.3 (17)，macOS 安装包仍为 0.8.1 (15)。每次发布递增版本和 build：
 
 ```sh
-python3 scripts/bump-version.py          # 0.8.2 -> 0.8.3，同时 build +1
+python3 scripts/bump-version.py          # 0.8.3 -> 0.8.4，同时 build +1
 python3 scripts/bump-version.py 0.9.0    # 显式指定更高版本
 ```
 
@@ -46,3 +46,7 @@ iOS IPA 上传后应下载回验，并将其摘要加入同一版本的 SHA256SU
 从已提交且干净的快照运行 `bash scripts/release-ios.sh`。脚本以关闭签名和覆盖率的 Release 配置构建设备 arm64 产物，剥离调试路径后调用 `scripts/audit-release.py --platform ios`，生成无签名 IPA、同提交源码 ZIP 和 SHA256SUMS.txt。发布前解压 IPA 再审计，上传后下载回验摘要。只上传这三份文件，不能上传 staging、构建目录、签名开发包或私人日志。
 
 0.8.2 的代码已在维护者 Duo 上安装并验证小窗流畅度改善；公开无签名 IPA 重签后的安装验证仍需由使用者完成。本次仅发布 iOS 安装包，不替换 macOS 0.8.1 附件。
+
+## iOS 0.8.3 发布
+
+沿用上述无签名打包、解包审计、源码匹配及下载回验流程，仅发布 iOS / iPadOS arm64 安装包。更新说明见 [0.8.3：多画面直播与三档弹幕](release-notes/0.8.3.md)。

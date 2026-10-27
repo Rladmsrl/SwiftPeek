@@ -7,11 +7,11 @@
 
 ## 手机多看
 
-在播放器控制条点「加看」，从历史、关注或搜索添加直播间，支持同时观看 1–4 路。普通手机提供上下双屏与四宫格，Duo 按展开和半折叠区域调整布局；默认单路声音，每格可快捷静音。流程、资源策略与验证范围见[手机多看说明](../docs/mobile-multiwatch.md)。
+在播放器控制条点「加看」，从历史、关注或搜索添加直播间，支持同时观看 1–4 路。普通手机提供上下双屏与四宫格，Duo 按展开和半折叠区域调整布局；默认单路声音，每格可快捷静音。弹幕提供「关闭 / 仅主画面 / 所有画面」三档，直接叠加在视频上。流程、资源策略与验证范围见[手机多看说明](../docs/mobile-multiwatch.md)。
 
 ## 下载与侧载
 
-当前版本 **0.8.2 (16)**：[下载无签名 IPA](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.2/SwiftPeek-0.8.2-iOS-unsigned.ipa)，支持 iOS / iPadOS 26+、arm64。对应源码和 SHA-256 校验文件见[发布页](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.2)。
+当前版本 **0.8.3 (17)**：[下载无签名 IPA](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.3/SwiftPeek-0.8.3-iOS-unsigned.ipa)，支持 iOS / iPadOS 26+、arm64。对应源码和 SHA-256 校验文件见[发布页](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.3)。
 
 1. 下载 IPA，并核对发布页的 SHA-256 校验值。
 2. 使用自己的有效签名身份及适用的侧载工具，对整个 App 重新签名并安装；也可以按下文从源码构建到自己的设备。

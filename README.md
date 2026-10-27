@@ -27,14 +27,14 @@ SwiftPeek 是一个开源的斗鱼第三方客户端，使用 Swift / SwiftUI �
 
 ## 下载与隐私
 
-iOS 最新版本为 **[0.8.2 (16)](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.2)**，修复开启小窗弹幕后的视频卡顿；macOS 最新安装包为 **[0.8.1 (15)](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.1)**。
+iOS 最新版本为 **[0.8.3 (17)](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.3)**，新增最多四路多画面直播与三档弹幕显示；macOS 最新安装包为 **[0.8.1 (15)](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.1)**。
 
 | 平台 | 下载 | 系统与安装要求 |
 | --- | --- | --- |
 | macOS | [Universal ZIP](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.1/SwiftPeek-0.8.1-macOS-universal.zip) | macOS 26+；包含 arm64 与 x86_64，解压后将 App 拖入“应用程序” |
-| iPhone / iPad | [无签名 IPA](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.2/SwiftPeek-0.8.2-iOS-unsigned.ipa) | iOS / iPadOS 26+、arm64；需要使用自己的签名身份重签后侧载，不能直接安装 |
+| iPhone / iPad | [无签名 IPA](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.3/SwiftPeek-0.8.3-iOS-unsigned.ipa) | iOS / iPadOS 26+、arm64；需要使用自己的签名身份重签后侧载，不能直接安装 |
 
-iOS：[对应源码](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.2/SwiftPeek-0.8.2-source.zip) · [SHA-256 校验文件](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.2/SHA256SUMS.txt)。macOS 对应源码和校验文件见 [0.8.1 发布页](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.1)。
+iOS：[对应源码](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.3/SwiftPeek-0.8.3-source.zip) · [SHA-256 校验文件](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.3/SHA256SUMS.txt)。macOS 对应源码和校验文件见 [0.8.1 发布页](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.1)。
 
 macOS 包采用 ad-hoc 签名，未做 Developer ID 公证，首次打开可能被 Gatekeeper 阻止。核对来源和校验值后，可按系统提示在“系统设置 → 隐私与安全性”允许该应用。Intel 版本已交叉编译，尚无 Intel 或 macOS 26 真机验证。
 
@@ -113,6 +113,7 @@ AI 章节由斗鱼为部分录像提供，包含事件标题与摘要，并非�
 ## 能做什么
 
 - **浏览直播**：推荐、分类、直播间与主播搜索，支持房间号和链接打开。
+- **手机多看**：从播放器「加看」进入，最多同时观看四路，可切声音、放大单路，并选择仅主画面或所有画面显示弹幕。[说明](docs/mobile-multiwatch.md)
 - **专注播放**：H.264 / AAC 的 HTTP-FLV 播放，清晰度与线路切换，音量、静音和全屏。
 - **缓冲与后台换流**：目标约 4 秒内存缓冲，提前准备新凭据与连接，在新流就绪后交接。
 - **弹幕**：滚动弹幕与列表，支持字体、字号、速度、透明度、显示区域和屏蔽词，也可在画中画里显示弹幕。

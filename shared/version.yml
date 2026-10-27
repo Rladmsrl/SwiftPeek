@@ -1,8 +1,8 @@
 # Both apps use the same release and monotonically increasing build number.
 settings:
   base:
-    MARKETING_VERSION: '0.8.2'
-    CURRENT_PROJECT_VERSION: '16'
+    MARKETING_VERSION: '0.8.3'
+    CURRENT_PROJECT_VERSION: '17'
   configs:
     Release:
       ENABLE_CODE_COVERAGE: NO

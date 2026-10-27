@@ -169,6 +169,9 @@ final class MobileRoomPlaybackSession<Player: MobilePlaybackEngine> {
         store = RoomStore(roomID: roomID, site: site)
         store.qualityPreferenceOverride = previous.qualityPreferenceOverride
         store.remembersQuality = previous.remembersQuality
+        store.danmakuVisibilityOverride = previous.danmakuVisibilityOverride
+        store.isDanmakuVisible = previous.isDanmakuVisible
+        store.setDanmakuDeliveryLimit(previous.danmakuMessagesPerSecond)
         store.setDanmakuDeliveryEnabled(previous.danmakuDeliveryEnabled)
         loadRoom(selection: selection)
     }

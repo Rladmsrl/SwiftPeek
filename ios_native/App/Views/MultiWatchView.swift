@@ -9,55 +9,16 @@ struct MultiWatchView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(\.scenePhase) private var scenePhase
     @State private var choosingRooms = false
-    @State private var showingChat = false
     @State private var pip = PiPController()
     @State private var pipRoomID: String?
     @State private var pipActive = false
 
     var body: some View {
-        @Bindable var workspace = workspace
-        NavigationStack {
-            playback
-            .navigationTitle("多画面")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button(workspace.hasOrigin ? "返回单画面" : "完成", systemImage: "chevron.left") { pip.detach(); workspace.finish() }
-                        .accessibilityIdentifier("multiwatch.close")
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("添加直播间", systemImage: "plus") { choosingRooms = true }
-                        .disabled(workspace.rooms.count >= 4)
-                        .accessibilityIdentifier("multiwatch.add")
-                }
-            }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                if workspace.isRunning { controls }
-            }
-            .sheet(isPresented: $choosingRooms) {
-                MultiWatchPicker(existing: workspace.rooms.map { MultiWatchSelection(id: $0.id, title: $0.name) }) { additions in
-                    for room in additions { workspace.add(id: room.id, title: room.title) }
-                }
-            }
-            .sheet(isPresented: $showingChat) {
-                NavigationStack {
-                    MultiWatchChat(room: workspace.selected)
-                        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { showingChat = false } } }
-                }
-                .presentationDetents([.medium, .large])
-            }
-        }
-        .task {
-            updateResourcePressure()
-            workspace.setBackgrounded(scenePhase == .background)
-            if workspace.rooms.isEmpty { choosingRooms = true }
-            configurePiP()
-        }
-        .onChange(of: workspace.pipCandidate?.id) { configurePiP() }
-        .onChange(of: workspace.isRunning) { configurePiP() }
-        .onChange(of: workspace.pipCandidate?.playback.player.state) { pip.invalidatePlaybackState() }
-        .onChange(of: workspace.pipCandidate?.playback.isWorking) { pip.invalidatePlaybackState() }
+        pipNavigation
         .onChange(of: settings.data.backgroundAudio) { workspace.refreshSettings() }
+        .onChange(of: settings.data.pictureInPictureDanmaku) { workspace.refreshSettings(); pip.refreshDanmaku() }
+        .onChange(of: workspace.danmakuMode) { pip.refreshDanmaku() }
+        .onChange(of: workspace.pipCandidate?.playback.store.isDanmakuVisible) { pip.refreshDanmaku() }
         .onChange(of: settings.data.autoPictureInPicture) { configurePiP() }
         .onChange(of: scenePhase) { _, value in workspace.setBackgrounded(value == .background) }
         .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)) { _ in updateResourcePressure() }
@@ -69,10 +30,51 @@ struct MultiWatchView: View {
         .onDisappear { pip.detach() }
     }
 
+    private var pipNavigation: some View {
+        navigation
+            .task {
+                updateResourcePressure()
+                workspace.setBackgrounded(scenePhase == .background)
+                if workspace.rooms.isEmpty { choosingRooms = true }
+                configurePiP()
+            }
+            .onChange(of: workspace.pipCandidate?.id) { configurePiP() }
+            .onChange(of: workspace.isRunning) { configurePiP() }
+            .onChange(of: workspace.pipCandidate?.playback.player.state) { pip.invalidatePlaybackState() }
+            .onChange(of: workspace.pipCandidate?.playback.isWorking) { pip.invalidatePlaybackState() }
+    }
+
+    private var navigation: some View {
+        NavigationStack {
+            playback
+                .navigationTitle("多画面")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button(workspace.hasOrigin ? "返回单画面" : "完成", systemImage: "chevron.left") { pip.detach(); workspace.finish() }
+                            .accessibilityIdentifier("multiwatch.close")
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("添加直播间", systemImage: "plus") { choosingRooms = true }
+                            .disabled(workspace.rooms.count >= 4)
+                            .accessibilityIdentifier("multiwatch.add")
+                    }
+                }
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    if workspace.isRunning { controls }
+                }
+                .sheet(isPresented: $choosingRooms) {
+                    MultiWatchPicker(existing: workspace.rooms.map { MultiWatchSelection(id: $0.id, title: $0.name) }) { additions in
+                        for room in additions { workspace.add(id: room.id, title: room.title) }
+                    }
+                }
+        }
+    }
+
     private var playback: some View {
         GeometryReader { geometry in
             let layout = layout(in: geometry)
-            MultiWatchPaneLayout(size: geometry.size, frames: layout.tiles + [layout.companion]) {
+            MultiWatchPaneLayout(size: geometry.size, frames: layout.tiles) {
                 ForEach(Array(workspace.rooms.enumerated()), id: \.element.id) { index, room in
                     MultiWatchTile(room: room, pipActive: pipActive && pipRoomID == room.id)
                         .clipped()
@@ -80,11 +82,6 @@ struct MultiWatchView: View {
                         .allowsHitTesting(!layout.tiles[index].isEmpty)
                         .accessibilityHidden(layout.tiles[index].isEmpty)
                 }
-                MultiWatchChat(room: workspace.selected)
-                    .clipped()
-                    .opacity(layout.companion.isEmpty ? 0 : 1)
-                    .allowsHitTesting(!layout.companion.isEmpty)
-                    .accessibilityHidden(layout.companion.isEmpty)
             }
         }
         .padding(8)
@@ -120,8 +117,19 @@ struct MultiWatchView: View {
                 }
                 .frame(maxWidth: .infinity, minHeight: 44).contentShape(.rect)
                 .accessibilityIdentifier("multiwatch.mute")
-                Button("弹幕", systemImage: "text.bubble") { showingChat = true }
-                    .frame(maxWidth: .infinity, minHeight: 44).contentShape(.rect)
+                Menu {
+                    Picker("弹幕", selection: $workspace.danmakuMode) {
+                        ForEach(MultiWatchDanmakuMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                                .accessibilityIdentifier("multiwatch.danmaku.\(mode.rawValue)")
+                        }
+                    }
+                } label: {
+                    Label("弹幕：\(workspace.danmakuMode.label)", systemImage: workspace.danmakuMode == .off ? "text.bubble" : "text.bubble.fill")
+                }
+                .frame(maxWidth: .infinity, minHeight: 44).contentShape(.rect)
+                .accessibilityValue(workspace.danmakuMode.label)
+                .accessibilityIdentifier("multiwatch.danmaku")
                 Menu {
                     Picker("布局", selection: $workspace.layoutMode) {
                         ForEach(MultiWatchLayout.Mode.allCases) { Text($0.rawValue).tag($0) }
@@ -174,10 +182,10 @@ struct MultiWatchView: View {
             pipActive = active
             workspace.setPiP(active ? room.id : nil)
         }
-        pip.danmakuSnapshot = { [weak room, weak settings] in
-            guard let room, let settings else { return PiPDanmakuSnapshot() }
+        pip.danmakuSnapshot = { [weak room, weak settings, weak workspace] in
+            guard let room, let settings, let workspace else { return PiPDanmakuSnapshot() }
             return PiPDanmakuSnapshot(messages: room.playback.store.messages, settings: settings.danmakuSettings,
-                                      isVisible: settings.data.pictureInPictureDanmaku && room.playback.store.isDanmakuVisible,
+                                      isVisible: workspace.danmakuMode != .off && settings.data.pictureInPictureDanmaku && room.playback.store.isDanmakuVisible,
                                       sourceID: room.id)
         }
     }
@@ -208,9 +216,9 @@ private struct MultiWatchTile: View {
             ZStack {
                 Color.black
                 FLVVideoLayerView(player: player).allowsHitTesting(false)
-                if selected && !workspace.constrained {
-                    DanmakuOverlay(messages: room.playback.store.messages, settings: room.playback.store.danmakuRenderSettings,
-                                   isVisible: room.playback.store.isDanmakuVisible)
+                if workspace.showsDanmaku(for: room) {
+                    DanmakuOverlay(messages: room.playback.store.messages, settings: workspace.danmakuSettings(for: room),
+                                   isVisible: true)
                         .allowsHitTesting(false)
                 }
                 status
@@ -247,7 +255,7 @@ private struct MultiWatchTile: View {
                     Button(player.isActive || room.playback.isWorking ? "暂停" : "播放 / 重试", systemImage: player.isActive ? "pause" : "play") {
                         room.playback.togglePlayback()
                     }
-                    Toggle("主画面弹幕", isOn: Binding(get: { room.playback.store.isDanmakuVisible }, set: { room.playback.store.isDanmakuVisible = $0 }))
+                    Toggle("本画面弹幕", isOn: Binding(get: { room.playback.store.isDanmakuVisible }, set: { workspace.setDanmakuVisible($0, for: room) }))
                     Menu("画质") {
                         Button(room.manualQuality ? "自动" : "自动 ✓") { workspace.useAutomaticQuality(room) }
                         ForEach(Array(room.playback.store.qualities.enumerated()), id: \.offset) { index, quality in
@@ -315,33 +323,6 @@ private struct MultiWatchTile: View {
     }
 }
 
-private struct MultiWatchChat: View {
-    let room: PhoneMultiWatchRoom?
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(room.map { "\($0.name) · 弹幕" } ?? "主画面弹幕")
-                .font(.subheadline.weight(.semibold)).lineLimit(1).padding(12)
-            Divider()
-            if let room {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 8) {
-                        if room.playback.store.messages.isEmpty {
-                            Text(room.playback.store.danmakuNotice ?? "等待弹幕…").foregroundStyle(.secondary)
-                        }
-                        ForEach(room.playback.store.messages.suffix(80)) { message in
-                            Text("\(Text(message.userName).foregroundStyle(Theme.accent)) \(message.message)")
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }.font(.caption).padding(12)
-                }
-                .defaultScrollAnchor(.bottom)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(.background, in: .rect(cornerRadius: 12))
-    }
-}
-
 struct MultiWatchPicker: View {
     enum Source: String, CaseIterable, Identifiable {
         case history = "历史", follow = "关注", search = "搜索"
@@ -363,24 +344,13 @@ struct MultiWatchPicker: View {
         NavigationStack {
             List {
                 Section {
-                    HStack {
-                        Text("正在看 \(existing.count) 路 · 已选 \(selection.count) 路")
-                            .font(.subheadline).foregroundStyle(.secondary)
-                        Spacer(minLength: 8)
-                        Button("添加（\(selection.count)）", action: commit)
-                            .buttonStyle(.borderedProminent).disabled(selection.isEmpty)
-                            .accessibilityIdentifier("multiwatch.picker.add")
-                    }
+                    Text("正在看 \(existing.count) 路 · 已选 \(selection.count) 路")
+                        .font(.subheadline).foregroundStyle(.secondary)
                     Picker("添加来源", selection: $source) {
                         ForEach(Source.allCases) { Text($0.rawValue).tag($0) }
                     }
                     .pickerStyle(.segmented)
                     .accessibilityIdentifier("multiwatch.picker.source")
-                }
-                if !selection.isEmpty {
-                    Section("待添加 · 最多同时看 4 路") {
-                        ForEach(selection) { room in row(id: room.id, title: room.title) }
-                    }
                 }
                 switch source {
                 case .history:
@@ -405,9 +375,26 @@ struct MultiWatchPicker: View {
                         if search.phase == .idle { Text("输入主播名后搜索，也可直接粘贴房间号或斗鱼链接").foregroundStyle(.secondary) }
                     }
                 }
+                if !selection.isEmpty {
+                    Section("待添加 · 最多同时看 4 路") {
+                        ForEach(selection) { room in row(id: room.id, title: room.title) }
+                    }
+                }
             }
             .navigationTitle("加看直播间")
             .navigationBarTitleDisplayMode(.inline)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                HStack {
+                    Text("已选 \(selection.count) 路，还可选 \(max(0, 4 - count)) 路")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                    Spacer(minLength: 8)
+                    Button("添加（\(selection.count)）", action: commit)
+                        .buttonStyle(.borderedProminent).disabled(selection.isEmpty)
+                        .accessibilityIdentifier("multiwatch.picker.add")
+                }
+                .padding(12)
+                .background(.bar)
+            }
             .searchable(text: $query, prompt: "主播、房间号或斗鱼链接")
             .onSubmit(of: .search) { source = .search; search.keyword = query; search.search() }
             .onChange(of: query) { _, value in

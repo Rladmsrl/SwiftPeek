@@ -58,6 +58,8 @@ final class MultiWatchUITests: XCTestCase {
         XCTAssertFalse(app.buttons["multiwatch.select.layout-1"].isHittable)
         capture("multiwatch-phone-focused")
         app.buttons["multiwatch.focus"].tap()
+        capture("multiwatch-phone-restored")
+        XCTAssertEqual(app.buttons["multiwatch.focus"].label, "放大主画面")
         XCTAssertTrue(app.buttons["multiwatch.select.layout-1"].isHittable)
         XCUIDevice.shared.orientation = .landscapeLeft
         let settled = expectation(description: "Display rotation settled")
@@ -90,6 +92,33 @@ final class MultiWatchUITests: XCTestCase {
         app.buttons["移除直播间"].tap()
         XCTAssertTrue(app.buttons["multiwatch.select.layout-1"].isHittable)
         capture("multiwatch-phone-one-large-text")
+    }
+
+    func testDanmakuModesAndPerRoomSwitch() {
+        preview(4)
+        let menu = app.buttons["multiwatch.danmaku"]
+        for mode in ["所有画面", "关闭", "仅主画面", "所有画面"] {
+            menu.tap()
+            let choice = app.buttons[mode]
+            XCTAssertTrue(choice.waitForExistence(timeout: 5))
+            choice.tap()
+            XCTAssertEqual(menu.value as? String, mode)
+            for index in 1...4 { XCTAssertTrue(app.buttons["multiwatch.select.layout-\(index)"].isHittable) }
+        }
+        capture("multiwatch-danmaku-all")
+        app.buttons["multiwatch.options.layout-2"].tap()
+        let toggle = app.buttons["本画面弹幕"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        toggle.tap()
+        if app.buttons["multiwatch.close"].isHittable { app.buttons["multiwatch.close"].tap() }
+        else { app.tap(); app.buttons["multiwatch.close"].tap() }
+        XCTAssertTrue(app.navigationBars["我的"].waitForExistence(timeout: 5))
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(menu.waitForExistence(timeout: 15))
+        XCTAssertEqual(menu.value as? String, "所有画面")
+        menu.tap()
+        app.buttons["仅主画面"].tap()
     }
 
     func testDuoFoldingKeepsAllRoomIdentities() throws {
@@ -131,6 +160,8 @@ final class MultiWatchUITests: XCTestCase {
             let row = app.buttons["multiwatch.pick.\(id)"].firstMatch
             XCTAssertTrue(row.waitForExistence(timeout: 3))
             row.tap()
+            capture("player-picked-\(id)")
+            XCTAssertEqual(app.buttons["multiwatch.picker.add"].label, "添加（\(id.count)）")
         }
         search.typeText("4")
         XCTAssertFalse(app.buttons["multiwatch.pick.1234"].isEnabled)
