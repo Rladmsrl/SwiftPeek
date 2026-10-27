@@ -153,6 +153,7 @@ struct RoomView: View {
             let isTabSwitch = homeTab != nil && router.selectedTab != homeTab
             guard !isTabSwitch else { return }
 
+            if isFullscreen { exitFullscreen() }
             playback.close()
             pip.detach()
         }
@@ -659,6 +660,7 @@ struct RoomView: View {
     private func enterFullscreen() {
         LiveDiagnostics.record("ui.fullscreen", fields: ["page": "live", "enabled": "true"])
         wantsFullscreen = true
+        sceneContext.requestLandscapeFullscreen()
         controlsVisible = true
         resetControlsTimer()
     }
@@ -666,6 +668,7 @@ struct RoomView: View {
     private func exitFullscreen() {
         LiveDiagnostics.record("ui.fullscreen", fields: ["page": "live", "enabled": "false"])
         wantsFullscreen = false
+        sceneContext.restoreOrientationBeforeFullscreen()
         isLocked = false
         controlsVisible = true
         hud = nil  // 否则拖动中途退出，再次进全屏会看到上次残留的 HUD

@@ -11,7 +11,7 @@
 
 ## 下载与侧载
 
-当前版本 **0.8.3 (17)**：[下载无签名 IPA](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.3/SwiftPeek-0.8.3-iOS-unsigned.ipa)，支持 iOS / iPadOS 26+、arm64。对应源码和 SHA-256 校验文件见[发布页](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.3)。
+当前版本 **0.8.4 (18)**：[下载无签名 IPA](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.4-ios/SwiftPeek-0.8.4-iOS-unsigned.ipa)，支持 iOS / iPadOS 26+、arm64。对应源码和 SHA-256 校验文件见[发布页](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.4-ios)。
 
 1. 下载 IPA，并核对发布页的 SHA-256 校验值。
 2. 使用自己的有效签名身份及适用的侧载工具，对整个 App 重新签名并安装；也可以按下文从源码构建到自己的设备。

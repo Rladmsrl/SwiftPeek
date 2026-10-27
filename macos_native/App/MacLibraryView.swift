@@ -366,7 +366,7 @@ struct MacLibraryView: View {
                 LazyVGrid(columns: MacDesign.columns, spacing: 20) {
                     ForEach(library.history) { item in
                         MacRoomCard(room: LiveRoomItem(roomID: item.roomID, title: item.title, cover: item.cover, userName: item.userName),
-                                    live: false, watchedAt: item.watchedAt) { openRoom(item.roomID) }
+                                    showsStatus: false, watchedAt: item.watchedAt) { openRoom(item.roomID) }
                             .contextMenu {
                                 Button("查看录像") { openReplays(item.roomID) }
                                 Divider()

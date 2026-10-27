@@ -37,6 +37,11 @@ public struct LiveSubCategory: Identifiable, Hashable, Sendable {
 
 // MARK: - 房间
 
+/// Status supplied by a room listing; absence of evidence must not imply live.
+public enum LiveRoomStatus: Hashable, Sendable {
+    case unknown, live, looping
+}
+
 public struct LiveRoomItem: Identifiable, Hashable, Sendable {
     public var id: String { roomID }
     public let roomID: String
@@ -44,13 +49,16 @@ public struct LiveRoomItem: Identifiable, Hashable, Sendable {
     public let cover: String
     public let userName: String
     public let online: Int
+    public let status: LiveRoomStatus
 
-    public init(roomID: String, title: String, cover: String, userName: String, online: Int = 0) {
+    public init(roomID: String, title: String, cover: String, userName: String, online: Int = 0,
+                status: LiveRoomStatus = .unknown) {
         self.roomID = roomID
         self.title = title
         self.cover = cover
         self.userName = userName
         self.online = online
+        self.status = status
     }
 }
 

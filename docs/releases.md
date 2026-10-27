@@ -2,14 +2,16 @@
 
 ## 版本
 
-两端只从 `shared/version.yml` 读取版本。当前源码及 iOS 发布为 0.8.3 (17)，macOS 安装包仍为 0.8.1 (15)。每次发布递增版本和 build：
+两端只从 `shared/version.yml` 读取版本。当前双端版本为 0.8.4 (18)。每次发布递增版本和 build：
 
 ```sh
-python3 scripts/bump-version.py          # 0.8.3 -> 0.8.4，同时 build +1
+python3 scripts/bump-version.py          # 0.8.4 -> 0.8.5，同时 build +1
 python3 scripts/bump-version.py 0.9.0    # 显式指定更高版本
 ```
 
 不要复用已发布 tag。版本脚本不提交、不打 tag、不上传。
+
+0.8.4 起，同一版本按平台分别创建 `v<version>-ios`、`v<version>-macos` 两个 Release，标签指向同一发布提交，各自附带平台安装包、匹配源码 ZIP 和 SHA256SUMS.txt。打包目录分别为 `.local/releases/<version>/ios/` 和 `.local/releases/<version>/macos/`，可从同一干净快照依次或并行执行两端脚本。
 
 ## macOS
 
@@ -21,7 +23,7 @@ bash scripts/release-macos.sh
 
 脚本为 arm64 和 x86_64 构建 Universal 应用，将分发副本的调试路径符号移除后重新 ad-hoc 签名，扫描最终 app，生成应用 ZIP、对应提交的源码 ZIP 和 SHA-256 校验文件。构建日志、原始产物和 staging 都不上传。
 
-输出在忽略的 `.local/releases/<version>/`。发布前解压应用 ZIP，再运行 `scripts/audit-release.py` 检查版本、两种架构、签名、个人路径、凭据特征和许可资源；检查源码 ZIP 不含私人数据。该扫描是发布防线，不是任意秘密或漏洞的完整检测。
+输出在忽略的 `.local/releases/<version>/macos/`。发布前解压应用 ZIP，再运行 `scripts/audit-release.py` 检查版本、两种架构、签名、个人路径、凭据特征和许可资源；检查源码 ZIP 不含私人数据。该扫描是发布防线，不是任意秘密或漏洞的完整检测。
 
 只上传 `SwiftPeek-<version>-macOS-universal.zip`、`SwiftPeek-<version>-source.zip` 和 `SHA256SUMS.txt`，并将 release tag 指向生成源码包的同一个提交。
 
@@ -50,3 +52,7 @@ iOS IPA 上传后应下载回验，并将其摘要加入同一版本的 SHA256SU
 ## iOS 0.8.3 发布
 
 沿用上述无签名打包、解包审计、源码匹配及下载回验流程，仅发布 iOS / iPadOS arm64 安装包。更新说明见 [0.8.3：多画面直播与三档弹幕](release-notes/0.8.3.md)。
+
+## 双端 0.8.4 发布
+
+两端从同一提交构建，分别发布 [iOS 全屏返回与直播状态修复](release-notes/0.8.4-ios.md) 和 [macOS 直播状态修复](release-notes/0.8.4-macos.md)。每个平台都应解包审计并下载回验，不能以一端通过替代另一端的检查。

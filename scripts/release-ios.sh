@@ -9,11 +9,12 @@ if [[ -n "$(git status --porcelain)" ]]; then
 fi
 version="$(sed -n "s/.*MARKETING_VERSION: '\([^']*\)'.*/\1/p" shared/version.yml)"
 build="$(sed -n "s/.*CURRENT_PROJECT_VERSION: '\([^']*\)'.*/\1/p" shared/version.yml)"
-if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+if git rev-parse -q --verify "refs/tags/v$version" >/dev/null || \
+   git rev-parse -q --verify "refs/tags/v$version-ios" >/dev/null; then
   echo 'This version is already tagged; run scripts/bump-version.py first.' >&2
   exit 1
 fi
-release_dir="$repo_dir/.local/releases/$version"
+release_dir="$repo_dir/.local/releases/$version/ios"
 if [[ -e "$release_dir" ]]; then
   echo 'Release directory already exists; inspect it before retrying.' >&2
   exit 1
@@ -37,4 +38,4 @@ archive="SwiftPeek-$version-iOS-unsigned.ipa"
 COPYFILE_DISABLE=1 ditto -c -k --noextattr --norsrc --keepParent "$release_dir/staging/Payload" "$release_dir/$archive"
 git archive --format=zip --prefix="SwiftPeek-$version/" -o "$release_dir/SwiftPeek-$version-source.zip" HEAD
 (cd "$release_dir" && shasum -a 256 "$archive" "SwiftPeek-$version-source.zip" > SHA256SUMS.txt)
-echo "Ready: $archive, matching source archive, SHA256SUMS.txt (under .local/releases/$version)"
+echo "Ready: $archive, matching source archive, SHA256SUMS.txt (under .local/releases/$version/ios)"

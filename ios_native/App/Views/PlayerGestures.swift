@@ -1,4 +1,5 @@
 import AVFoundation
+import SimpleLiveKit
 import SwiftUI
 import UIKit
 
@@ -8,17 +9,46 @@ import UIKit
 @MainActor
 final class PlayerSceneContext {
     weak var window: UIWindow?
+    private var orientationBeforeFullscreen: UIInterfaceOrientation?
 
     var brightness: Double {
         get { Double(window?.windowScene?.screen.brightness ?? 0.5) }
         set { window?.windowScene?.screen.brightness = CGFloat(min(max(newValue, 0), 1)) }
     }
 
-    #if DEBUG
-    func requestOrientation(_ mask: UIInterfaceOrientationMask) {
-        window?.windowScene?.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { _ in }
+    /// Remember the entry orientation once, including an existing landscape side.
+    /// Repeated entry requests must not replace the original portrait orientation.
+    func requestLandscapeFullscreen() {
+        guard let scene = window?.windowScene else { return }
+        let orientation = scene.effectiveGeometry.interfaceOrientation
+        if orientationBeforeFullscreen == nil, orientation != .unknown {
+            orientationBeforeFullscreen = orientation
+        }
+        guard !orientation.isLandscape else { return }
+        requestOrientation(.landscape)
     }
-    #endif
+
+    func restoreOrientationBeforeFullscreen() {
+        guard let orientation = orientationBeforeFullscreen else { return }
+        orientationBeforeFullscreen = nil
+        // Submit even if the scene still reports the old direction: the entry
+        // rotation may be pending when the user quickly exits fullscreen.
+        switch orientation {
+        case .portrait: requestOrientation(.portrait)
+        case .portraitUpsideDown: requestOrientation(.portraitUpsideDown)
+        case .landscapeLeft: requestOrientation(.landscapeLeft)
+        case .landscapeRight: requestOrientation(.landscapeRight)
+        default: break
+        }
+    }
+
+    func requestOrientation(_ mask: UIInterfaceOrientationMask) {
+        window?.windowScene?.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { error in
+            LiveDiagnostics.record("ui.orientationRequestFailed", fields: [
+                "code": String((error as NSError).code)
+            ])
+        }
+    }
 }
 
 struct PlayerSceneReader: UIViewRepresentable {

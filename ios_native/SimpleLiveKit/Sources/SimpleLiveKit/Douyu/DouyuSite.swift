@@ -106,7 +106,7 @@ public struct DouyuSite: LiveSite {
     }
 
     /// `rl` 列表结构在推荐和分类接口中完全一致
-    private static func parseRoomList(_ result: JSON, page: Int) -> LiveCategoryResult {
+    static func parseRoomList(_ result: JSON, page: Int) -> LiveCategoryResult {
         var items: [LiveRoomItem] = []
         for item in result["data"]["rl"].array where item["type"].intValue == 1 {
             items.append(
@@ -115,12 +115,26 @@ public struct DouyuSite: LiveSite {
                     title: Self.htmlUnescape(item["rn"].stringValue),
                     cover: item["rs16"].stringValue,
                     userName: item["nn"].stringValue,
-                    online: item["ol"].intValue
+                    online: item["ol"].intValue,
+                    status: Self.parseListRoomStatus(item)
                 )
             )
         }
         let pageCount = result["data"]["pgcnt"].intValue
         return LiveCategoryResult(hasMore: page < pageCount, items: items)
+    }
+
+    /// Douyu's list renderer defines rst as horizontal/vertical/voice/carousel.
+    /// `type == 1` identifies a room card; `rt` is not its live/loop status.
+    static func parseListRoomStatus(_ room: JSON) -> LiveRoomStatus {
+        if let number = room["rst"].raw as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() {
+            return .unknown
+        }
+        switch room["rst"].string {
+        case "0", "1", "2": return .live
+        case "3": return .looping
+        default: return .unknown
+        }
     }
 
     // MARK: - 房间详情

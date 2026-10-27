@@ -3,7 +3,7 @@ import SwiftUI
 
 struct MacRoomCard: View {
     let room: LiveRoomItem
-    var live = true
+    var showsStatus = true
     var watchedAt: Date?
     let open: () -> Void
     @State private var hovered = false
@@ -15,7 +15,9 @@ struct MacRoomCard: View {
             VStack(alignment: .leading, spacing: 0) {
                 CoverImage(url: room.cover, cornerRadius: 0)
                     .overlay(alignment: .topLeading) {
-                        if live { MacLiveBadge().padding(12) }
+                        if showsStatus, room.status != .unknown {
+                            MacLiveBadge(title: room.status.label, live: room.status == .live).padding(12)
+                        }
                     }
                     .overlay(alignment: .bottomTrailing) {
                         if settings.data.showHotBadge, room.online > 0 {
@@ -75,7 +77,9 @@ struct MacFeaturedRoom: View {
                 .overlay(alignment: .leading) {
                     VStack(alignment: .leading, spacing: 13) {
                         HStack(spacing: 8) {
-                            MacLiveBadge()
+                            if room.status != .unknown {
+                                MacLiveBadge(title: room.status.label, live: room.status == .live)
+                            }
                             Text("此刻，值得一看").font(.system(size: 10, weight: .medium)).foregroundStyle(.white.opacity(0.7))
                         }
                         Text(room.title).font(.system(size: 25, weight: .bold)).lineLimit(2)

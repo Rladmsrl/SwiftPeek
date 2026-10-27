@@ -99,7 +99,7 @@ final class DuoLayoutUITests: XCTestCase {
         app.buttons["全屏"].firstMatch.tap()
         let portraitExit = app.buttons["退出全屏"].firstMatch
         XCTAssertTrue(portraitExit.waitForExistence(timeout: 5))
-        capture("room-fullscreen-portrait")
+        capture("room-fullscreen-from-portrait")
         exitFullscreen("room-portrait-fullscreen-exited")
         XCTAssertTrue(panel.isHittable)
         rotate(.landscapeLeft, name: "room-landscape")
@@ -114,6 +114,53 @@ final class DuoLayoutUITests: XCTestCase {
         XCTAssertTrue(panel.isHittable)
         rotate(.portrait, name: "room-portrait-restored")
         XCTAssertTrue(panel.exists)
+    }
+
+    private func verifyFullscreenButtonRotatesToLandscape(launchArgument: String, companion: String) {
+        app.launchArguments += [launchArgument, "1", "-keepControls", "1"]
+        app.launch()
+        let panel = app.staticTexts[companion]
+        XCTAssertTrue(panel.waitForExistence(timeout: 15))
+        let window = app.windows.firstMatch
+        let portrait = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            window.frame.height > window.frame.width
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [portrait], timeout: 5), .completed)
+        let initialSize = window.frame.size
+        for cycle in 1...2 {
+            app.buttons["全屏"].firstMatch.tap()
+            let landscape = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                window.frame.width > window.frame.height
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [landscape], timeout: 5), .completed,
+                           "Fullscreen must rotate the actual window without a device rotation command")
+            XCTAssertTrue(app.buttons["退出全屏"].firstMatch.waitForExistence(timeout: 5))
+            capture(launchArgument + "-button-landscape-\(cycle)")
+            exitFullscreen(launchArgument + "-button-exited-\(cycle)")
+            let restored = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                window.frame.size == initialSize && panel.isHittable
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 5), .completed,
+                           "Exit must restore the entry layout without manually rotating the device")
+        }
+        for direction in [UIDeviceOrientation.landscapeLeft, .landscapeRight] {
+            rotate(direction, name: launchArgument + "-entry-landscape-\(direction.rawValue)")
+            XCTAssertGreaterThan(window.frame.width, window.frame.height)
+            app.buttons["全屏"].firstMatch.tap()
+            XCTAssertTrue(app.buttons["退出全屏"].firstMatch.waitForExistence(timeout: 5))
+            exitFullscreen(launchArgument + "-landscape-exited-\(direction.rawValue)")
+            XCTAssertGreaterThan(window.frame.width, window.frame.height,
+                                 "A landscape entry must not be forced to portrait on exit")
+            XCTAssertTrue(panel.isHittable)
+        }
+    }
+
+    func testLiveFullscreenButtonRotatesToLandscape() {
+        verifyFullscreenButtonRotatesToLandscape(launchArgument: "-launchRoomLayout", companion: "实时弹幕")
+    }
+
+    func testReplayFullscreenButtonRotatesToLandscape() {
+        verifyFullscreenButtonRotatesToLandscape(launchArgument: "-launchReplayLayout", companion: "选择一段录像")
     }
 
     func testReplayListNavigationSurvivesRotation() {

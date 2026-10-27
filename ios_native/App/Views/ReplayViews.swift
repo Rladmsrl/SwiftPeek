@@ -662,12 +662,14 @@ struct ReplayView: View {
     private func enterFullscreen() {
         LiveDiagnostics.record("ui.fullscreen", fields: ["page": "replay", "enabled": "true"])
         wantsFullscreen = true
+        sceneContext.requestLandscapeFullscreen()
         scheduleHide()
     }
 
     private func exitFullscreen() {
         LiveDiagnostics.record("ui.fullscreen", fields: ["page": "replay", "enabled": "false"])
         wantsFullscreen = false
+        sceneContext.restoreOrientationBeforeFullscreen()
         hud = nil
         controlsVisible = true
     }

@@ -32,6 +32,28 @@ struct CoverImage: View {
 
 // MARK: - 房间卡片
 
+extension LiveRoomStatus {
+    var label: String {
+        switch self {
+        case .unknown: "状态待确认"
+        case .live: "直播中"
+        case .looping: "轮播"
+        }
+    }
+}
+
+struct RoomStatusBadge: View {
+    let status: LiveRoomStatus
+
+    var body: some View {
+        Label(status.label, systemImage: status == .live ? "dot.radiowaves.left.and.right" : "repeat")
+            .font(.system(size: 11, weight: .semibold))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .glassEffect(.regular, in: .capsule)
+    }
+}
+
 struct RoomCard: View {
     let room: LiveRoomItem
     @Environment(AppSettings.self) private var settings
@@ -39,6 +61,11 @@ struct RoomCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             CoverImage(url: room.cover)
+                .overlay(alignment: .topLeading) {
+                    if room.status != .unknown {
+                        RoomStatusBadge(status: room.status).padding(6)
+                    }
+                }
                 .overlay(alignment: .bottomTrailing) {
                     if settings.data.showHotBadge {
                         HotBadge(value: room.online)
