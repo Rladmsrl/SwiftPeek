@@ -21,23 +21,31 @@ struct FollowView: View {
                         FollowTransferActions().buttonStyle(.bordered)
                     }
                 } else {
-                    let live = library.follows.filter { library.liveStatus[$0.roomID] == true }
-                    let rest = library.follows.filter { library.liveStatus[$0.roomID] != true }
+                    let groups = library.followGroups()
                     List {
-                        if !live.isEmpty {
+                        if !groups.live.isEmpty {
                             Section {
-                                rows(live)
+                                rows(groups.live)
                             } header: {
                                 HStack(spacing: 8) {
                                     LiveDot(pulses: true)
-                                    Text("正在直播 · \(live.count)")
+                                    Text("正在直播 · \(groups.live.count)")
                                 }
                             }
                         }
-                        Section {
-                            rows(rest)
-                        } header: {
-                            if !live.isEmpty { Text("未开播") }
+                        if !groups.looping.isEmpty {
+                            Section {
+                                rows(groups.looping)
+                            } header: {
+                                Label("轮播中 · \(groups.looping.count)", systemImage: "repeat")
+                            }
+                        }
+                        if !groups.rest.isEmpty {
+                            Section {
+                                rows(groups.rest)
+                            } header: {
+                                if !groups.live.isEmpty || !groups.looping.isEmpty { Text("未开播") }
+                            }
                         }
                         Section {
                         } footer: {
@@ -51,7 +59,7 @@ struct FollowView: View {
                             .padding(.top, 4)
                         }
                     }
-                    .animation(reduceMotion ? nil : Theme.glide, value: live.map(\.roomID))
+                    .animation(reduceMotion ? nil : Theme.glide, value: groups.live.map(\.roomID) + groups.looping.map(\.roomID))
                 }
             }
             .navigationTitle("关注")
@@ -67,17 +75,20 @@ struct FollowView: View {
             .task {
                 // 状态未知时首次进入自动刷新一次
                 if !library.follows.isEmpty,
-                   library.liveStatus.count < library.follows.count {
+                   library.roomStatus.count < library.follows.count {
                     await library.refreshFollowStatus()
+                } else {
+                    await library.refreshFollowStatusIfStale()
                 }
             }
+            .refreshesWhenReturning { await library.refreshFollowStatusIfStale() }
         }
     }
 
     private func rows(_ items: [FollowedRoom]) -> some View {
         ForEach(items) { item in
             NavigationLink(value: RoomRoute(roomID: item.roomID, title: item.title)) {
-                FollowRow(item: item, isLive: library.liveStatus[item.roomID])
+                FollowRow(item: item, status: library.followStatus(item.roomID))
             }
             .contextMenu {
                 Button("查看录像", systemImage: "play.rectangle.on.rectangle") {
@@ -102,11 +113,11 @@ struct FollowView: View {
 private struct FollowRow: View {
     let item: FollowedRoom
     /// nil 表示尚未刷新
-    let isLive: Bool?
+    let status: LiveRoomStatus?
 
     var body: some View {
         HStack(spacing: 12) {
-            AvatarImage(url: item.avatar, name: item.userName, size: 44, live: isLive == true)
+            AvatarImage(url: item.avatar, name: item.userName, size: 44, live: status == .live)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.userName)
@@ -120,11 +131,17 @@ private struct FollowRow: View {
 
             Spacer(minLength: 0)
 
-            if isLive == true { LiveDot() }
+            if status == .live {
+                LiveDot()
+            } else if status == .looping {
+                Image(systemName: "repeat")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
-        .accessibilityValue(isLive == true ? "直播中" : isLive == false ? "未开播" : "")
+        .accessibilityValue(status?.label ?? "")
     }
 }
 

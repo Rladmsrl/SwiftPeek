@@ -39,7 +39,16 @@ public struct LiveSubCategory: Identifiable, Hashable, Sendable {
 
 /// Status supplied by a room listing; absence of evidence must not imply live.
 public enum LiveRoomStatus: Hashable, Sendable {
-    case unknown, live, looping
+    case unknown, live, looping, offline
+    /// The room is configured for looping, which says nothing about whether the
+    /// anchor is broadcasting right now. Only the room's own status can tell.
+    case loopCandidate
+
+    /// The room's own status endpoint is authoritative; a configured loop that is
+    /// not currently live is reported as looping, as Douyu's web player does.
+    public init(isLiving: Bool, isRecord: Bool) {
+        self = isLiving ? .live : isRecord ? .looping : .offline
+    }
 }
 
 public struct LiveRoomItem: Identifiable, Hashable, Sendable {
@@ -67,13 +76,14 @@ public struct LiveAnchorItem: Identifiable, Hashable, Sendable {
     public let roomID: String
     public let avatar: String
     public let userName: String
-    public let isLive: Bool
+    public let status: LiveRoomStatus
+    public var isLive: Bool { status == .live }
 
-    public init(roomID: String, avatar: String, userName: String, isLive: Bool) {
+    public init(roomID: String, avatar: String, userName: String, status: LiveRoomStatus) {
         self.roomID = roomID
         self.avatar = avatar
         self.userName = userName
-        self.isLive = isLive
+        self.status = status
     }
 }
 
@@ -175,6 +185,10 @@ public struct LiveRoomBrief: Identifiable, Hashable, Sendable {
         self.isLiving = isLiving
         self.isRecord = isRecord
     }
+}
+
+public extension LiveRoomBrief {
+    var status: LiveRoomStatus { LiveRoomStatus(isLiving: isLiving, isRecord: isRecord) }
 }
 
 public struct LivePlayQuality: Identifiable, Sendable {

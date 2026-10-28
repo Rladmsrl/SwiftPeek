@@ -45,8 +45,9 @@ struct RecommendView: View {
             .liveDestinations()
             .refreshable { await store.refresh() }
             .task {
-                if store.rooms.isEmpty { await store.refresh() }
+                if store.rooms.isEmpty { await store.refresh() } else { await store.refreshIfStale() }
             }
+            .refreshesWhenReturning { await store.refreshIfStale() }
         }
     }
 }
@@ -123,8 +124,9 @@ struct CategoryRoomsView: View {
         .navigationTitle(store.category.name)
         .refreshable { await store.refresh() }
         .task {
-            if store.rooms.isEmpty { await store.refresh() }
+            if store.rooms.isEmpty { await store.refresh() } else { await store.refreshIfStale() }
         }
+        .refreshesWhenReturning { await store.refreshIfStale() }
     }
 }
 

@@ -487,7 +487,9 @@ struct MultiWatchPicker: View {
                     }
                 case .follow:
                     Section("关注的主播") {
-                        ForEach(library.follows) { room in row(id: room.roomID, title: room.userName) }
+                        ForEach(library.follows) { room in
+                            row(id: room.roomID, title: room.userName, status: library.followStatus(room.roomID))
+                        }
                         if library.follows.isEmpty { Text("暂无关注，可切换历史或搜索").foregroundStyle(.secondary) }
                     }
                 case .search:
@@ -507,6 +509,9 @@ struct MultiWatchPicker: View {
                         ForEach(selection) { room in row(id: room.id, title: room.title) }
                     }
                 }
+            }
+            .task(id: source) {
+                if source == .follow { await library.refreshFollowStatusIfStale() }
             }
             .navigationTitle("加看直播间")
             .navigationBarTitleDisplayMode(.inline)
@@ -547,7 +552,8 @@ struct MultiWatchPicker: View {
         dismiss()
     }
 
-    private func row(id: String, title: String) -> some View {
+    /// `status` 只在关注来源提供；未刷新或其他来源不显示。
+    private func row(id: String, title: String, status: LiveRoomStatus? = nil) -> some View {
         let playing = existing.contains { $0.id == id }
         let selected = selection.contains { $0.id == id }
         return Button {
@@ -557,7 +563,8 @@ struct MultiWatchPicker: View {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title).foregroundStyle(.primary)
-                    Text(playing ? "正在播放" : id).font(.caption).foregroundStyle(.secondary)
+                    Text(playing ? "正在播放" : status.map { "\($0.label) · \(id)" } ?? id)
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Image(systemName: playing ? "play.circle.fill" : (selected ? "checkmark.circle.fill" : "plus.circle"))

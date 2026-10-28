@@ -1,5 +1,8 @@
 import SimpleLiveKit
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 // MARK: - 封面
 
@@ -59,9 +62,19 @@ struct CoverTag: View {
 extension LiveRoomStatus {
     var label: String {
         switch self {
-        case .unknown: "状态待确认"
+        case .unknown, .loopCandidate: "状态待确认"
         case .live: "直播中"
         case .looping: "轮播"
+        case .offline: "未开播"
+        }
+    }
+
+    /// 封面角标：直播是默认状态不标；未确认的不猜。
+    var coverSymbol: String? {
+        switch self {
+        case .looping: "repeat"
+        case .offline: "moon.zzz"
+        case .unknown, .live, .loopCandidate: nil
         }
     }
 }
@@ -73,15 +86,18 @@ struct RoomCard: View {
     var watchedAt: Date?
     var highlighted = false
     @Environment(AppSettings.self) private var settings
+    private var confirmations: RoomStatusConfirmations { .shared }
 
     var body: some View {
+        let status = confirmations.status(of: room)
         VStack(alignment: .leading, spacing: 0) {
             CoverImage(url: room.cover, highlighted: highlighted)
                 .overlay(alignment: .topLeading) {
-                    if room.status == .looping {
-                        CoverTag(title: room.status.label, symbol: "repeat").padding(8)
+                    if let symbol = status.coverSymbol {
+                        CoverTag(title: status.label, symbol: symbol).padding(8)
                     }
                 }
+                .task(id: room.roomID) { await confirmations.confirmIfNeeded(room) }
 
             Text(room.title)
                 .font(Self.titleFont)
@@ -234,14 +250,43 @@ struct AnchorRow: View {
                 Text(anchor.userName)
                     .font(.subheadline.weight(.medium))
                     .lineLimit(1)
-                Text(anchor.isLive ? "直播中" : "未开播")
-                    .font(.caption)
-                    .foregroundStyle(anchor.isLive ? Theme.accent : .secondary)
+                if anchor.status != .unknown {
+                    Text(anchor.status.label)
+                        .font(.caption)
+                        .foregroundStyle(anchor.isLive ? Theme.accent : .secondary)
+                }
             }
 
             Spacer(minLength: 0)
         }
         .contentShape(.rect)
+    }
+}
+
+// MARK: - 列表自动刷新
+
+extension View {
+    /// 列表只在加载那一刻准确。App 长时间开着时，回到前台（Mac 切回本应用）由调用方
+    /// 判断是否过期并重新加载。
+    func refreshesWhenReturning(_ refresh: @escaping @MainActor () async -> Void) -> some View {
+        modifier(ReturningRefresh(refresh: refresh))
+    }
+}
+
+private struct ReturningRefresh: ViewModifier {
+    let refresh: @MainActor () async -> Void
+    @Environment(\.scenePhase) private var scenePhase
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { Task { await refresh() } }
+            }
+            #if os(macOS)
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                Task { await refresh() }
+            }
+            #endif
     }
 }
 

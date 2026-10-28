@@ -188,6 +188,68 @@ struct MobilePlaybackCheck {
         try await checkMultiWatch()
         try await checkMultiWatchDanmaku()
         try await checkWeakNetwork()
+        try await checkRoomStatus()
+    }
+
+    @MainActor private static func checkRoomStatus() async throws {
+        var clock = Date(timeIntervalSince1970: 1_000)
+        var calls: [String] = []
+        var running = 0
+        var peak = 0
+        let confirmations = RoomStatusConfirmations(lookup: { id in
+            calls.append(id)
+            running += 1
+            peak = max(peak, running)
+            defer { running -= 1 }
+            try await Task.sleep(for: .milliseconds(30))
+            return id == "live" ? .live : id == "gone" ? .offline : .looping
+        }, now: { clock })
+        func room(_ id: String, _ status: LiveRoomStatus = .loopCandidate) -> LiveRoomItem {
+            LiveRoomItem(roomID: id, title: "", cover: "", userName: "", status: status)
+        }
+
+        precondition(confirmations.status(of: room("x")) == .loopCandidate, "Unconfirmed loop-type room showed a status")
+        await confirmations.confirmIfNeeded(room("plain", .live))
+        precondition(calls.isEmpty && confirmations.status(of: room("plain", .live)) == .live)
+
+        let ids = (0..<10).map { "loop\($0)" } + ["live", "gone"]
+        let candidates = ids.map { room($0) }
+        await withTaskGroup(of: Void.self) { group in
+            for candidate in candidates { group.addTask { await confirmations.confirmIfNeeded(candidate) } }
+        }
+        precondition(peak <= RoomStatusConfirmations.concurrency, "Confirmations exceeded the concurrency cap")
+        precondition(Set(calls) == Set(ids) && calls.count == ids.count)
+        precondition(confirmations.status(of: room("live")) == .live, "A live anchor in a loop-type room kept the loop tag")
+        precondition(confirmations.status(of: room("gone")) == .offline)
+        precondition(confirmations.status(of: room("loop0")) == .looping)
+        precondition(confirmations.status(of: room("live", .live)) == .live)
+        print("PASS: loop-type list rooms are confirmed per room, at most four at a time, before showing a status")
+
+        await confirmations.confirmIfNeeded(room("live"))
+        precondition(calls.count == ids.count, "A fresh confirmation was requested again")
+        clock = clock.addingTimeInterval(RoomStatusConfirmations.lifetime + 1)
+        precondition(confirmations.status(of: room("live")) == .live, "An expired confirmation blanked the card before re-checking")
+        await confirmations.confirmIfNeeded(room("live"))
+        precondition(calls.count == ids.count + 1)
+        let away = room("away")
+        let scrolledAway = Task { await confirmations.confirmIfNeeded(away) }
+        scrolledAway.cancel()
+        await scrolledAway.value
+        precondition(confirmations.status(of: room("away")) == .loopCandidate)
+        print("PASS: confirmations are cached for two minutes and cards that scroll away cancel their request")
+
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let library = LibraryStore(storageDirectory: directory)
+        for (id, living, record) in [("off", false, false), ("loop", false, true), ("on", true, false)] {
+            library.toggleFollow(detail: LiveRoomDetail(roomID: id, title: id, cover: "", userName: id, userAvatar: "", online: 0,
+                                                        isLiving: living, payload: FakePayload(), isRecord: record, url: ""))
+        }
+        let groups = library.followGroups()
+        precondition(groups.live.map(\.roomID) == ["on"] && groups.looping.map(\.roomID) == ["loop"] && groups.rest.map(\.roomID) == ["off"],
+                     "Looping follows were grouped as offline")
+        precondition(library.followStatus("loop") == .looping && library.followStatus("off") == .offline)
+        print("PASS: follows separate live, looping and offline anchors")
     }
 
     @MainActor private static func checkWeakNetwork() async throws {

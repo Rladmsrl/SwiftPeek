@@ -120,19 +120,43 @@ public struct DouyuSite: LiveSite {
                 )
             )
         }
+        // 推荐接口的 pgcnt 恒为 0，翻到没有房间的页为止；分类接口给出真实页数。
         let pageCount = result["data"]["pgcnt"].intValue
-        return LiveCategoryResult(hasMore: page < pageCount, items: items)
+        let hasMore = pageCount > 0 ? page < pageCount : !result["data"]["rl"].array.isEmpty
+        return LiveCategoryResult(hasMore: hasMore, items: items)
     }
 
-    /// Douyu's list renderer defines rst as horizontal/vertical/voice/carousel.
-    /// `type == 1` identifies a room card; `rt` is not its live/loop status.
+    /// `rst` is the room's display type, not its live state. Lists only contain
+    /// rooms that are on air or looping; type 3 is a room configured for looping,
+    /// whose anchor may still be broadcasting live, so it must be confirmed per room.
+    /// `type == 1` identifies a room card; `rt` and `ioa` do not separate the two.
     static func parseListRoomStatus(_ room: JSON) -> LiveRoomStatus {
         if let number = room["rst"].raw as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() {
             return .unknown
         }
         switch room["rst"].string {
-        case "0", "1", "2": return .live
-        case "3": return .looping
+        case "0", "1", "2", "4": return .live
+        case "3": return .loopCandidate
+        default: return .unknown
+        }
+    }
+
+    /// Search marks on-air rooms with `isLive == 1` and offline ones with 2.
+    /// `roomType == 3` is the same loop-configured room type as list `rst == 3`.
+    static func parseSearchRoomStatus(_ room: JSON) -> LiveRoomStatus {
+        switch (room["isLive"].int, room["roomType"].int) {
+        case (1, 3): return .loopCandidate
+        case (1, _): return .live
+        case (2, _): return .offline
+        default: return .unknown
+        }
+    }
+
+    /// Anchor search carries the actual loop flag; `roomType` is only the room type.
+    static func parseAnchorStatus(_ info: JSON) -> LiveRoomStatus {
+        switch info["isLive"].int {
+        case 1: return info["isLoop"].int == 1 || info["videoLoop"].int == 1 ? .looping : .live
+        case 2: return .offline
         default: return .unknown
         }
     }
@@ -490,7 +514,8 @@ public struct DouyuSite: LiveSite {
                 title: Self.htmlUnescape($0["roomName"].stringValue),
                 cover: $0["roomSrc"].stringValue,
                 userName: $0["nickName"].stringValue,
-                online: Self.parseHotNumber($0["hot"].stringValue)
+                online: Self.parseHotNumber($0["hot"].stringValue),
+                status: Self.parseSearchRoomStatus($0)
             )
         }
         return LiveSearchRoomResult(hasMore: !list.isEmpty, items: items)
@@ -505,12 +530,11 @@ public struct DouyuSite: LiveSite {
         let list = result["data"]["relateUser"].array
         let items = list.map { item -> LiveAnchorItem in
             let info = item["anchorInfo"]
-            let isLive = info["isLive"].intValue == 1 && info["roomType"].intValue == 0
             return LiveAnchorItem(
                 roomID: info["rid"].stringValue,
                 avatar: info["avatar"].stringValue,
                 userName: info["nickName"].stringValue,
-                isLive: isLive
+                status: Self.parseAnchorStatus(info)
             )
         }
         return LiveSearchAnchorResult(hasMore: !list.isEmpty, items: items)
