@@ -187,18 +187,17 @@ struct MacLibraryView: View {
         return filter.isEmpty ? children : children.filter { $0.name.localizedCaseInsensitiveContains(filter) }
     }
 
-    private var liveFollows: [FollowedRoom] { library.follows.filter { library.liveStatus[$0.roomID] == true } }
-    private var otherFollows: [FollowedRoom] { library.follows.filter { library.liveStatus[$0.roomID] != true } }
-
     private var followContent: some View {
-        VStack(alignment: .leading, spacing: 28) {
+        let liveFollows = library.follows.filter { library.liveStatus[$0.roomID] == true }
+        let otherFollows = library.follows.filter { library.liveStatus[$0.roomID] != true }
+        return VStack(alignment: .leading, spacing: 28) {
             if library.follows.isEmpty {
                 MacEmptyState(symbol: "heart", title: "还没有关注的主播",
                               detail: "在直播间点主播旁的“关注”，下次就能在这里找到")
                 FollowTransferActions().buttonStyle(.glass).frame(maxWidth: .infinity)
             } else {
                 if !liveFollows.isEmpty {
-                    followGroup("正在直播 · \(liveFollows.count)", liveFollows)
+                    followGroup("正在直播 · \(liveFollows.count)", liveFollows, pulses: true)
                 }
                 followGroup(liveFollows.isEmpty ? (library.isRefreshingFollows ? "正在更新开播状态…" : nil) : "未开播", otherFollows)
                 HStack(spacing: 12) {
@@ -213,11 +212,14 @@ struct MacLibraryView: View {
         .animation(reduceMotion ? nil : Theme.glide, value: liveFollows.map(\.roomID))
     }
 
-    private func followGroup(_ title: String?, _ items: [FollowedRoom]) -> some View {
+    private func followGroup(_ title: String?, _ items: [FollowedRoom], pulses: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             if let title {
-                Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
-                    .padding(.horizontal, 10)
+                HStack(spacing: 8) {
+                    if pulses { LiveDot(pulses: true) }
+                    Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 10)
             }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 260, maximum: 420), spacing: 8)], spacing: 4) {
                 ForEach(items) { item in

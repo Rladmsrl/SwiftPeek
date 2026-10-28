@@ -9,7 +9,8 @@ final class MultiWatchUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
         app = XCUIApplication()
-        app.launchArguments = ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN", "-launchTab", "mine"]
+        // 画面上的按钮会自动淡出，测试期间保持显示
+        app.launchArguments = ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN", "-launchTab", "mine", "-keepControls", "1"]
         XCUIDevice.shared.orientation = .portrait
     }
 

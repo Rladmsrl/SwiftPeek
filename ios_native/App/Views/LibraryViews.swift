@@ -9,9 +9,6 @@ struct FollowView: View {
     @State private var path = NavigationPath()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var live: [FollowedRoom] { library.follows.filter { library.liveStatus[$0.roomID] == true } }
-    private var rest: [FollowedRoom] { library.follows.filter { library.liveStatus[$0.roomID] != true } }
-
     var body: some View {
         NavigationStack(path: $path) {
             Group {
@@ -24,12 +21,17 @@ struct FollowView: View {
                         FollowTransferActions().buttonStyle(.bordered)
                     }
                 } else {
+                    let live = library.follows.filter { library.liveStatus[$0.roomID] == true }
+                    let rest = library.follows.filter { library.liveStatus[$0.roomID] != true }
                     List {
                         if !live.isEmpty {
                             Section {
                                 rows(live)
                             } header: {
-                                Text("正在直播 · \(live.count)")
+                                HStack(spacing: 8) {
+                                    LiveDot(pulses: true)
+                                    Text("正在直播 · \(live.count)")
+                                }
                             }
                         }
                         Section {

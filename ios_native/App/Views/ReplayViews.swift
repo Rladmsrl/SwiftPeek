@@ -235,10 +235,12 @@ struct ReplayView: View {
             ReplayVideoView(player: player) { player.preparePiP(automatic: settings.data.autoPictureInPicture) }
                 .allowsHitTesting(false)
             if let feed = session.feed {
-                DanmakuOverlay(messages: feed.messages, settings: settings.danmakuSettings,
-                               isVisible: session.isDanmakuVisible,
-                               clearToken: feed.clearToken, isPaused: !player.isPlaying)
-                    .id(session.hashID)
+                ObservationScope {
+                    DanmakuOverlay(messages: feed.messages, settings: settings.danmakuSettings,
+                                   isVisible: session.isDanmakuVisible,
+                                   clearToken: feed.clearToken, isPaused: !player.isPlaying)
+                }
+                .id(session.hashID)
                     .allowsHitTesting(false)
             }
             if fullscreen {
@@ -316,8 +318,10 @@ struct ReplayView: View {
                     .accessibilityLabel("退出全屏")
                     VStack(alignment: .leading, spacing: 1) {
                         Text(detail?.title ?? "录像").font(.footnote.weight(.semibold)).lineLimit(1)
-                        Text(session.currentChapter?.title ?? detail?.authorName ?? "")
-                            .font(.caption2).opacity(0.75).lineLimit(1)
+                        ObservationScope {
+                            Text(session.currentChapter?.title ?? detail?.authorName ?? "")
+                        }
+                        .font(.caption2).opacity(0.75).lineLimit(1)
                     }.foregroundStyle(.white).shadow(radius: 3)
                 }
                 Spacer(minLength: 0)
@@ -336,8 +340,10 @@ struct ReplayView: View {
             Spacer(minLength: 0)
             VStack(spacing: 2) {
                 HStack {
-                    Text("\(ReplayPlayer.format(player.displayTime)) / \(ReplayPlayer.format(session.duration))")
-                        .font(.caption2.weight(.semibold)).monospacedDigit()
+                    ObservationScope {
+                        Text("\(ReplayPlayer.format(player.displayTime)) / \(ReplayPlayer.format(session.duration))")
+                    }
+                    .font(.caption2.weight(.semibold)).monospacedDigit()
                         .foregroundStyle(.white)
                     Spacer()
                     if let next = session.nextSegment, fullscreen {
@@ -358,10 +364,12 @@ struct ReplayView: View {
                     .padding(.trailing, -10)
                     .accessibilityLabel(fullscreen ? "退出全屏" : "全屏")
                 }
-                ReplayScrubber(time: player.displayTime, duration: session.duration, buffered: player.bufferedTime,
-                               heat: session.heat.bins, chapters: session.chapters) { target in
-                    session.seek(to: target)
-                    scheduleHide()
+                ObservationScope {
+                    ReplayScrubber(time: player.displayTime, duration: session.duration, buffered: player.bufferedTime,
+                                   heat: session.heat.bins, chapters: session.chapters) { target in
+                        session.seek(to: target)
+                        scheduleHide()
+                    }
                 }
                 .disabled(session.phase != .loaded)
             }
@@ -458,11 +466,13 @@ struct ReplayView: View {
                 }
                 .font(.caption).foregroundStyle(.secondary).labelStyle(CompactLabelStyle())
             }
-            if let chapter = session.currentChapter {
-                Label(chapter.title, systemImage: "sparkles")
-                    .font(.caption.weight(.medium)).foregroundStyle(Theme.accent).lineLimit(1)
-                    .contentTransition(.opacity)
-                    .animation(.easeOut(duration: 0.25), value: chapter.id)
+            ObservationScope {
+                if let chapter = session.currentChapter {
+                    Label(chapter.title, systemImage: "sparkles")
+                        .font(.caption.weight(.medium)).foregroundStyle(Theme.accent).lineLimit(1)
+                        .contentTransition(.opacity)
+                        .animation(.easeOut(duration: 0.25), value: chapter.id)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -479,8 +489,9 @@ struct ReplayView: View {
 
     @ViewBuilder private var panelContent: some View {
         switch panel {
-        case .danmaku: danmakuList
-        case .chapters: chapterList
+        // 弹幕随进度追加、当前章节随进度变化，各自包成观察边界
+        case .danmaku: ObservationScope { danmakuList }
+        case .chapters: ObservationScope { chapterList }
         case .episodes: episodeList
         }
     }

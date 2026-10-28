@@ -268,9 +268,8 @@ struct MacRoomView: View {
         ZStack {
             Color.black
             FLVVideoLayerView(player: session.player)
-            DanmakuOverlay(messages: session.store.messages, settings: settings.danmakuSettings,
-                           isVisible: session.store.isDanmakuVisible && !session.pipActive)
-                .allowsHitTesting(false)
+            LiveDanmakuLayer(store: session.store, settings: settings.danmakuSettings,
+                             isVisible: session.store.isDanmakuVisible && !session.pipActive)
             if session.pipActive {
                 VStack(spacing: 14) {
                     Image(systemName: "pip").font(.system(size: 32, weight: .light))
@@ -416,27 +415,7 @@ struct MacRoomView: View {
                 Text(notice).font(.system(size: 11)).foregroundStyle(.secondary)
                     .padding(.horizontal, 14).padding(.top, 10)
             }
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
-                        if session.store.messages.isEmpty {
-                            Text(session.store.phase == .loading ? "正在连接弹幕…" : "还没有弹幕")
-                                .font(.system(size: 12)).foregroundStyle(.tertiary)
-                                .frame(maxWidth: .infinity).padding(.vertical, 48)
-                        }
-                        ForEach(session.store.messages) { message in
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(message.userName).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
-                                Text(message.message).font(.system(size: 13)).foregroundStyle(message.color.macListForeground)
-                                    .lineSpacing(2).textSelection(.enabled)
-                            }.id(message.id).frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }.padding(14)
-                }.scrollIndicators(.hidden)
-                    .onChange(of: session.store.messages.last?.id) { _, id in
-                        if followChat, let id { proxy.scrollTo(id, anchor: .bottom) }
-                    }
-            }
+            MacDanmakuList(store: session.store, followChat: followChat)
             Toggle("跟随最新弹幕", isOn: $followChat).toggleStyle(.checkbox)
                 .font(.system(size: 11)).foregroundStyle(.secondary)
                 .padding(.horizontal, 14).padding(.vertical, 10)
@@ -488,6 +467,36 @@ struct WindowReader: NSViewRepresentable {
             super.viewDidMoveToWindow()
             let current = window
             DispatchQueue.main.async { [weak self] in self?.onResolve?(current) }
+        }
+    }
+}
+
+/// 实时弹幕列表。独立成视图，弹幕到达时只重算列表，不带动整个直播间窗口
+private struct MacDanmakuList: View {
+    let store: RoomStore
+    let followChat: Bool
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    if store.messages.isEmpty {
+                        Text(store.phase == .loading ? "正在连接弹幕…" : "还没有弹幕")
+                            .font(.system(size: 12)).foregroundStyle(.tertiary)
+                            .frame(maxWidth: .infinity).padding(.vertical, 48)
+                    }
+                    ForEach(store.messages) { message in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(message.userName).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                            Text(message.message).font(.system(size: 13)).foregroundStyle(message.color.macListForeground)
+                                .lineSpacing(2).textSelection(.enabled)
+                        }.id(message.id).frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }.padding(14)
+            }.scrollIndicators(.hidden)
+                .onChange(of: store.messages.last?.id) { _, id in
+                    if followChat, let id { proxy.scrollTo(id, anchor: .bottom) }
+                }
         }
     }
 }

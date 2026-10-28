@@ -171,9 +171,11 @@ struct AvatarImage: View {
     }
 }
 
-/// 正在直播的信号：一个橙点，外圈缓慢扩散。减少动态效果时静止。
+/// 正在直播的信号：一个橙点。`pulses` 时外圈缓慢扩散，减少动态效果时静止。
+/// 无限动画每帧都要重算，一屏只留一个会动的（分组标题旁），列表行里用静态点。
 struct LiveDot: View {
     var size: CGFloat = 7
+    var pulses = false
     @State private var pulsing = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -188,7 +190,7 @@ struct LiveDot: View {
                     .opacity(pulsing ? 0 : 0.9)
             }
             .onAppear {
-                guard !reduceMotion else { return }
+                guard pulses, !reduceMotion else { return }
                 withAnimation(.easeOut(duration: 1.8).repeatForever(autoreverses: false)) { pulsing = true }
             }
             .accessibilityLabel("直播中")
@@ -343,6 +345,29 @@ struct CategoryTile: View {
     private static let icon: CGFloat = 60
     private static let font = Font.footnote
     #endif
+}
+
+// MARK: - 高频数据
+
+/// 观察边界：内容在这个视图自己的 body 里求值，读到的 @Observable 属性只让它失效。
+/// 用来包住播放进度、当前章节这类每秒变化几次的小块，避免整页跟着重算。
+struct ObservationScope<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View { content() }
+}
+
+/// 屏上弹幕层。只在自己的 body 里读 `store.messages`：弹幕每 80ms 合并一批，
+/// 放在页面 body 里读会让整页（控制条、信息行、工具栏）跟着每批重算。
+struct LiveDanmakuLayer: View {
+    let store: RoomStore
+    let settings: DanmakuSettings
+    let isVisible: Bool
+
+    var body: some View {
+        DanmakuOverlay(messages: store.messages, settings: settings, isVisible: isVisible)
+            .allowsHitTesting(false)
+    }
 }
 
 // MARK: - 状态视图

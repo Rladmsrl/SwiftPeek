@@ -33,7 +33,7 @@ struct MacCategoryButton: View {
     }
 }
 
-/// 关注的主播：头像、名字和当前标题一行排开，正在直播的带橙色细环和脉冲点。
+/// 关注的主播：头像、名字和当前标题一行排开，正在直播的带橙色细环和橙点。
 struct MacFollowTile: View {
     let item: FollowedRoom
     let isLive: Bool?

@@ -12,7 +12,12 @@ struct MultiWatchView: View {
     @State private var pip = PiPController()
     @State private var pipRoomID: String?
     @State private var pipActive = false
+    @State private var tileControlsVisible = true
+    @State private var tileControlsHideTask: Task<Void, Never>?
+    @State private var showsConstrainedNotice = false
+    @State private var constrainedNoticeTask: Task<Void, Never>?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
 
     var body: some View {
         pipNavigation
@@ -28,13 +33,25 @@ struct MultiWatchView: View {
             workspace.setConstrained(true)
             workspace.focused = true
         }
-        .onDisappear { pip.detach() }
+        .onChange(of: workspace.constrained) { _, constrained in
+            if constrained { showConstrainedNotice() } else { showsConstrainedNotice = false }
+        }
+        .onChange(of: workspace.rooms.count) { showTileControls() }
+        .onChange(of: workspace.focused) { showTileControls() }
+        .onChange(of: voiceOver) { showTileControls() }
+        .onDisappear {
+            pip.detach()
+            tileControlsHideTask?.cancel()
+            constrainedNoticeTask?.cancel()
+        }
     }
 
     private var pipNavigation: some View {
         navigation
             .task {
                 updateResourcePressure()
+                if workspace.constrained { showConstrainedNotice() }
+                showTileControls()
                 workspace.setBackgrounded(scenePhase == .background)
                 if workspace.rooms.isEmpty { choosingRooms = true }
                 configurePiP()
@@ -79,7 +96,9 @@ struct MultiWatchView: View {
             let layout = layout(in: geometry)
             MultiWatchPaneLayout(size: geometry.size, frames: layout.tiles) {
                 ForEach(Array(workspace.rooms.enumerated()), id: \.element.id) { index, room in
-                    MultiWatchTile(room: room, pipActive: pipActive && pipRoomID == room.id)
+                    MultiWatchTile(room: room, pipActive: pipActive && pipRoomID == room.id,
+                                   controlsVisible: tileControlsVisible,
+                                   showControls: showTileControls, toggleControls: toggleTileControls)
                         .clipped()
                         .opacity(layout.tiles[index].isEmpty ? 0 : 1)
                         .allowsHitTesting(!layout.tiles[index].isEmpty)
@@ -90,7 +109,7 @@ struct MultiWatchView: View {
         .padding(8)
         .background(Color(uiColor: .secondarySystemBackground))
         .overlay(alignment: .top) {
-            if workspace.constrained {
+            if workspace.constrained && showsConstrainedNotice {
                 Text("已降低自动画质，减轻设备负载")
                     .font(.caption)
                     .padding(.horizontal, 12).padding(.vertical, 7)
@@ -161,6 +180,49 @@ struct MultiWatchView: View {
         }
     }
 
+    // MARK: 画面上的玻璃控件
+
+    /// 每路画面底部的玻璃按钮 4 秒无操作后淡出，点画面再唤出。
+    /// 玻璃要对身后逐帧变化的视频重新采样，常驻在四路画面上会一直占着 GPU。
+    private func showTileControls() {
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) { tileControlsVisible = true }
+        scheduleTileControlsHide()
+    }
+
+    private func toggleTileControls() {
+        if tileControlsVisible {
+            tileControlsHideTask?.cancel()
+            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) { tileControlsVisible = false }
+        } else {
+            showTileControls()
+        }
+    }
+
+    private func scheduleTileControlsHide() {
+        tileControlsHideTask?.cancel()
+        // 旁白用户靠焦点找按钮，不自动隐藏
+        guard !voiceOver else { return }
+        #if DEBUG
+        if UserDefaults.standard.bool(forKey: "keepControls") { return }
+        #endif
+        tileControlsHideTask = Task {
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled else { return }
+            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { tileControlsVisible = false }
+        }
+    }
+
+    /// 降载提示也是玻璃，提示几秒后收起
+    private func showConstrainedNotice() {
+        withAnimation { showsConstrainedNotice = true }
+        constrainedNoticeTask?.cancel()
+        constrainedNoticeTask = Task {
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled else { return }
+            withAnimation { showsConstrainedNotice = false }
+        }
+    }
+
     private func updateResourcePressure() {
         let process = ProcessInfo.processInfo
         workspace.setConstrained(process.isLowPowerModeEnabled || process.thermalState == .serious || process.thermalState == .critical)
@@ -209,6 +271,9 @@ private struct MultiWatchPaneLayout: Layout {
 private struct MultiWatchTile: View {
     let room: PhoneMultiWatchRoom
     let pipActive: Bool
+    let controlsVisible: Bool
+    let showControls: () -> Void
+    let toggleControls: () -> Void
     @Environment(PhoneMultiWatch.self) private var workspace
     private var selected: Bool { workspace.selectedID == room.id }
     private var audible: Bool { !workspace.muted && workspace.audibleID == room.id }
@@ -221,20 +286,31 @@ private struct MultiWatchTile: View {
                 Color.black
                 FLVVideoLayerView(player: player).allowsHitTesting(false)
                 if workspace.showsDanmaku(for: room) {
-                    DanmakuOverlay(messages: room.playback.store.messages, settings: workspace.danmakuSettings(for: room),
-                                   isVisible: true)
-                        .allowsHitTesting(false)
+                    LiveDanmakuLayer(store: room.playback.store, settings: workspace.danmakuSettings(for: room),
+                                     isVisible: true)
                 }
                 status
             }
             .contentShape(.rect)
-            .onTapGesture { withAnimation(reduceMotion ? nil : Theme.glide) { workspace.select(room.id) } }
+            .onTapGesture {
+                // 点主画面唤出或收起按钮；点其他画面先切过去
+                if selected {
+                    toggleControls()
+                } else {
+                    withAnimation(reduceMotion ? nil : Theme.glide) { workspace.select(room.id) }
+                    showControls()
+                }
+            }
             .accessibilityLabel("主画面：\(room.name)")
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { workspace.select(room.id) }
             .accessibilityIdentifier("multiwatch.tile.\(room.id)")
 
+            // 用透明度而不是移除：菜单打开时按钮淡出也不会把菜单收掉
             tileBar
+                .opacity(controlsVisible ? 1 : 0)
+                .allowsHitTesting(controlsVisible)
+                .accessibilityHidden(!controlsVisible)
         }
         .clipShape(.rect(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(selected ? Theme.accent : Color.clear, lineWidth: 2))
@@ -249,7 +325,7 @@ private struct MultiWatchTile: View {
     private var tileBar: some View {
         GlassEffectContainer(spacing: 6) {
             HStack(spacing: 6) {
-                Button { workspace.toggleSound(room.id) } label: {
+                Button { workspace.toggleSound(room.id); showControls() } label: {
                     Image(systemName: audible ? "speaker.wave.2.fill" : "speaker.slash")
                         .font(.system(size: 14, weight: .semibold))
                         .contentTransition(.symbolEffect(.replace))
@@ -261,7 +337,10 @@ private struct MultiWatchTile: View {
                 .accessibilityValue(audible ? "有声" : "静音")
                 .accessibilityIdentifier("multiwatch.sound.\(room.id)")
 
-                Button { withAnimation(reduceMotion ? nil : Theme.glide) { workspace.select(room.id) } } label: {
+                Button {
+                    withAnimation(reduceMotion ? nil : Theme.glide) { workspace.select(room.id) }
+                    showControls()
+                } label: {
                     Text(room.name).lineLimit(1)
                         .font(.caption.weight(.semibold))
                         .padding(.horizontal, 12)

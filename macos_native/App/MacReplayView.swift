@@ -116,10 +116,12 @@ struct MacReplayView: View {
             Color.black
             ReplayVideoView(player: player) { player.preparePiP(automatic: false) }
             if let feed = session.feed {
-                DanmakuOverlay(messages: feed.messages, settings: settings.danmakuSettings,
-                               isVisible: session.isDanmakuVisible && !player.isPiPActive,
-                               clearToken: feed.clearToken, isPaused: !player.isPlaying)
-                    .id(session.hashID)
+                ObservationScope {
+                    DanmakuOverlay(messages: feed.messages, settings: settings.danmakuSettings,
+                                   isVisible: session.isDanmakuVisible && !player.isPiPActive,
+                                   clearToken: feed.clearToken, isPaused: !player.isPlaying)
+                }
+                .id(session.hashID)
                     .allowsHitTesting(false)
             }
             statusOverlay
@@ -237,9 +239,11 @@ struct MacReplayView: View {
 
     private var controls: some View {
         VStack(spacing: 4) {
-            ReplayScrubber(time: player.displayTime, duration: session.duration, buffered: player.bufferedTime,
-                           heat: session.heat.bins, chapters: session.chapters) { session.seek(to: $0) }
-                .padding(.horizontal, 4)
+            ObservationScope {
+                ReplayScrubber(time: player.displayTime, duration: session.duration, buffered: player.bufferedTime,
+                               heat: session.heat.bins, chapters: session.chapters) { session.seek(to: $0) }
+            }
+            .padding(.horizontal, 4)
             ViewThatFits(in: .horizontal) {
                 controlRow(expanded: true)
                 controlRow(expanded: false)
@@ -266,12 +270,14 @@ struct MacReplayView: View {
                 Button { session.open(hashID: next.hashID, start: 0) } label: { Image(systemName: "forward.end.fill") }
                     .help("下一段：\(next.title)")
             }
-            Text("\(ReplayPlayer.format(player.displayTime)) / \(ReplayPlayer.format(session.duration))")
-                .font(.system(size: 11, weight: .medium)).monospacedDigit().foregroundStyle(.white.opacity(0.85))
-                .fixedSize()
-            if expanded, let chapter = session.currentChapter {
-                Text(chapter.title).font(.system(size: 11)).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
-                    .frame(maxWidth: 240, alignment: .leading)
+            ObservationScope {
+                Text("\(ReplayPlayer.format(player.displayTime)) / \(ReplayPlayer.format(session.duration))")
+                    .font(.system(size: 11, weight: .medium)).monospacedDigit().foregroundStyle(.white.opacity(0.85))
+                    .fixedSize()
+                if expanded, let chapter = session.currentChapter {
+                    Text(chapter.title).font(.system(size: 11)).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
+                        .frame(maxWidth: 240, alignment: .leading)
+                }
             }
             Spacer(minLength: 10)
             Menu {
@@ -344,9 +350,10 @@ struct MacReplayView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 14).padding(.bottom, 12)
             Rectangle().fill(Theme.hairline).frame(height: 1)
+            // 弹幕随进度追加、当前章节随进度变化，各自包成观察边界
             switch panel {
-            case .danmaku: danmakuPanel
-            case .chapters: chapterPanel
+            case .danmaku: ObservationScope { danmakuPanel }
+            case .chapters: ObservationScope { chapterPanel }
             case .episodes: episodePanel
             }
         }.macPanel()

@@ -103,6 +103,7 @@ final class LibraryStore {
     ///
     /// 用 `roomBrief`（单请求）而不是 `roomDetail`（3 请求 + JS 签名）；
     /// 并按 5 个一批分组并发，避免一次性对斗鱼发起几十个请求被限流。
+    /// 结果攒齐后一次写入：逐批写会让分组列表跟着每批重排一次。
     func refreshFollowStatus() async {
         guard !follows.isEmpty, !isRefreshingFollows else { return }
         isRefreshingFollows = true
@@ -112,12 +113,13 @@ final class LibraryStore {
         let ids = follows.map(\.roomID)
         let batchSize = 5
 
+        var briefs: [LiveRoomBrief] = []
         var index = 0
         while index < ids.count {
             let batch = Array(ids[index..<min(index + batchSize, ids.count)])
             index += batchSize
 
-            let results = await withTaskGroup(of: LiveRoomBrief?.self) { group in
+            briefs += await withTaskGroup(of: LiveRoomBrief?.self) { group in
                 for roomID in batch {
                     group.addTask { try? await site.roomBrief(roomID: roomID) }
                 }
@@ -127,24 +129,29 @@ final class LibraryStore {
                 }
                 return collected
             }
+        }
 
-            for brief in results {
-                liveStatus[brief.roomID] = brief.isLiving
-                guard let position = follows.firstIndex(where: { $0.roomID == brief.roomID })
-                else { continue }
-                if !brief.title.isEmpty { follows[position].title = brief.title }
-                if !brief.userAvatar.isEmpty { follows[position].avatar = brief.userAvatar }
-                if !brief.userName.isEmpty { follows[position].userName = brief.userName }
-            }
+        // 最后一次 await 之后才取当前列表，刷新期间增删的关注不会被覆盖
+        var status = liveStatus
+        var updated = follows
+        for brief in briefs {
+            status[brief.roomID] = brief.isLiving
+            guard let position = updated.firstIndex(where: { $0.roomID == brief.roomID })
+            else { continue }
+            if !brief.title.isEmpty { updated[position].title = brief.title }
+            if !brief.userAvatar.isEmpty { updated[position].avatar = brief.userAvatar }
+            if !brief.userName.isEmpty { updated[position].userName = brief.userName }
         }
 
         // 开播的排前面，其次按关注时间倒序
-        follows.sort { lhs, rhs in
-            let l = liveStatus[lhs.roomID] ?? false
-            let r = liveStatus[rhs.roomID] ?? false
+        updated.sort { lhs, rhs in
+            let l = status[lhs.roomID] ?? false
+            let r = status[rhs.roomID] ?? false
             if l != r { return l }
             return lhs.addedAt > rhs.addedAt
         }
+        liveStatus = status
+        follows = updated
         save(follows, to: followsURL)
     }
 

@@ -56,7 +56,7 @@ struct RoomView: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, 12)
-                    danmakuList
+                    RoomDanmakuList(store: store)
                 }
             }
         }
@@ -170,12 +170,8 @@ struct RoomView: View {
             FLVVideoLayerView(player: player, enabled: !multiWatch.owns(playback))
                 .allowsHitTesting(false)
             if !multiWatch.owns(playback) {
-                DanmakuOverlay(
-                    messages: store.messages,
-                    settings: store.danmakuRenderSettings,
-                    isVisible: store.isDanmakuVisible
-                )
-                .allowsHitTesting(false)
+                LiveDanmakuLayer(store: store, settings: store.danmakuRenderSettings,
+                                 isVisible: store.isDanmakuVisible)
             }
 
             if isFullscreen {
@@ -802,10 +798,15 @@ struct RoomView: View {
                 .fixedSize(horizontal: true, vertical: false)
         }
     }
+}
 
-    // MARK: - 弹幕列表
+// MARK: - 弹幕列表
 
-    private var danmakuList: some View {
+/// 独立成视图，弹幕到达时只重算列表本身
+private struct RoomDanmakuList: View {
+    let store: RoomStore
+
+    var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
