@@ -19,6 +19,11 @@ actor LiveTagBuffer {
         let ready: Bool
         let ended: Bool
         let error: Error?
+        /// Raw FLV timestamp of the oldest buffered media tag (the start keyframe before consumption).
+        let firstTimestamp: UInt32?
+        let lastTimestamp: UInt32?
+        /// The producer is waiting for room, so silence on the socket is expected.
+        let capacityLimited: Bool
     }
     private var queue: [FLVTag] = []
     private var cursor = 0
@@ -77,7 +82,8 @@ actor LiveTagBuffer {
     }
     func snapshot() -> Snapshot {
         Snapshot(seconds: seconds, bytes: bytes, count: queue.count - cursor,
-                 ready: started && (seconds >= Self.targetSeconds || capacityLimited), ended: ended, error: error)
+                 ready: started && (seconds >= Self.targetSeconds || capacityLimited), ended: ended, error: error,
+                 firstTimestamp: firstTimestamp, lastTimestamp: lastTimestamp, capacityLimited: capacityLimited)
     }
     func pop() -> FLVTag? {
         guard cursor < queue.count else { return nil }
@@ -96,18 +102,43 @@ actor LiveTagBuffer {
     func finish(_ error: Error?) { ended = true; self.error = error }
 }
 
+/// When bytes last arrived from the socket. Read on every consumer iteration,
+/// so it avoids an actor hop.
+final class LiveReceiptClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var last: TimeInterval?
+
+    func mark() {
+        let now = ProcessInfo.processInfo.systemUptime
+        lock.lock()
+        last = now
+        lock.unlock()
+    }
+
+    var lastReceivedAt: TimeInterval? {
+        lock.lock()
+        defer { lock.unlock() }
+        return last
+    }
+}
+
 /// Producer runs independently of the renderer; EOF/403 is visible while buffered
 /// media is still being consumed. A cancelled preparation always closes its socket.
 final class BufferedLiveSource: @unchecked Sendable {
     let buffer = LiveTagBuffer()
     let startedAt = ProcessInfo.processInfo.systemUptime
     private let stream: HTTPChunkStream
+    private let receipt = LiveReceiptClock()
     private let producer: Task<Void, Never>
+
+    /// nil until the first byte; a silent open socket is detected from this, not from the renderer.
+    var lastReceivedAt: TimeInterval? { receipt.lastReceivedAt }
 
     init(request: URLRequest, diagnosticID: String, configuration: URLSessionConfiguration? = nil) {
         let stream = HTTPChunkStream(diagnosticID: diagnosticID, configuration: configuration)
         self.stream = stream
         let buffer = self.buffer
+        let receipt = self.receipt
         producer = Task.detached(priority: .userInitiated) {
             await withTaskCancellationHandler {
                 defer { stream.cancel() }
@@ -116,6 +147,7 @@ final class BufferedLiveSource: @unchecked Sendable {
                     for try await data in stream.start(request: request) {
                         defer { stream.acknowledge() }
                         try Task.checkCancellation()
+                        receipt.mark()
                         parser.append(data)
                         while let tag = try parser.nextTag() {
                             // Validate replacement codec configuration before retiring the old source.

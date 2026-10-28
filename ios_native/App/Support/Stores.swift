@@ -391,7 +391,7 @@ final class RoomStore {
 
     /// Commit quality, URL, line and preference together only after a successful request.
     @discardableResult
-    func selectQuality(_ index: Int) async -> Bool {
+    func selectQuality(_ index: Int, remember: Bool = true) async -> Bool {
         guard let detail, index != selectedQualityIndex, qualities.indices.contains(index) else { return false }
         streamRequestGeneration += 1
         let generation = streamRequestGeneration
@@ -405,7 +405,7 @@ final class RoomStore {
             currentLineIndex = fresh.index(forLineID: previousLine)
             lastStreamChangeWasReconnect = false
             playURL = fresh
-            if remembersQuality { settings?.data.lastQualityName = quality.quality }
+            if remember, remembersQuality { settings?.data.lastQualityName = quality.quality }
             danmakuNotice = nil
             offlineNotice = nil
             return true
@@ -481,13 +481,37 @@ final class RoomStore {
         }
         let quality = qualities[selectedQualityIndex]
         let previousLine = playbackSelection.lineID
-        let fresh = try await site.playURL(detail: detail, quality: quality)
+        let current = playURL
+        // 续接只需要一条线路。只解析目标线路，弱网下少几次接口往返；其余线路沿用旧地址，
+        // 过期了也只会在手动切线时触发一次 403 续签。
+        let target = Self.replacementLine(in: current, previous: previousLine, rotate: rotateLine)
+        let fresh = try await site.playURL(detail: detail, quality: quality, lineIDs: target.map { [$0] } ?? [])
         try Task.checkCancellation()
         try requireUsable(fresh)
+        // 只有恰好拿回目标线路时才合并。站点退回全量解析（目标线路坏了、或不支持按线路取）
+        // 时，结果就是完整线路表，按原逻辑处理，不保留已消失线路的过期地址。
+        if let current, let target, fresh.lineIDs == [target] {
+            let merged = current.merging(fresh)
+            return PreparedPlaybackStream(stream: merged, lineIndex: merged.index(forLineID: target), qualityName: quality.quality)
+        }
         let matched = fresh.index(forLineID: previousLine)
         let exists = previousLine.map { fresh.lineIDs.contains($0) } ?? false
         let index = rotateLine && exists && fresh.urls.count > 1 ? (matched + 1) % fresh.urls.count : matched
         return PreparedPlaybackStream(stream: fresh, lineIndex: index, qualityName: quality.quality)
+    }
+
+    /// 续接的目标线路：保持当前线路，或轮转到下一条。没有线路身份时返回 nil（解析全部线路）。
+    static func replacementLine(in current: LivePlayURL?, previous: String?, rotate: Bool) -> String? {
+        guard let previous else { return nil }
+        guard rotate, let current, current.lineIDs.count > 1,
+              let index = current.lineIDs.firstIndex(of: previous) else { return previous }
+        return current.lineIDs[(index + 1) % current.lineIDs.count]
+    }
+
+    /// 弱网自动降档的目标：清晰度列表从高到低排列，取下一档。
+    var lowerQualityIndex: Int? {
+        let next = selectedQualityIndex + 1
+        return qualities.indices.contains(next) ? next : nil
     }
 
     func commitReplacementStream(_ prepared: PreparedPlaybackStream) {

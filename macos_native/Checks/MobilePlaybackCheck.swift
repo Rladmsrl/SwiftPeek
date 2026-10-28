@@ -18,6 +18,8 @@ private actor FakeSite: LiveSite {
     var briefCalls = 0
     var urlCalls = 0
     var hold = false
+    var honorLineSubset = false
+    var requestedLines: [[String]] = []
     var pending: [CheckedContinuation<LivePlayURL, Error>] = []
     func configure(fail: Bool = false, lines: [String] = ["a", "b"], statuses: [Bool?] = [true], hold: Bool = false) {
         self.fail = fail; lineIDs = lines; self.statuses = statuses; self.hold = hold
@@ -48,6 +50,14 @@ private actor FakeSite: LiveSite {
         if hold { return try await withCheckedThrowingContinuation { pending.append($0) } }
         return stream(lineIDs)
     }
+    func playURL(detail: LiveRoomDetail, quality: LivePlayQuality, lineIDs requested: [String]) async throws -> LivePlayURL {
+        requestedLines.append(requested)
+        guard honorLineSubset, !requested.isEmpty else { return try await playURL(detail: detail, quality: quality) }
+        urlCalls += 1
+        if fail { throw LiveCoreError("fixture stream error") }
+        return stream(requested.map { "\($0)" })
+    }
+    func setHonorLineSubset(_ value: Bool) { honorLineSubset = value; requestedLines = [] }
     func categories() async throws -> [LiveCategory] { [] }
     func recommendRooms(page: Int) async throws -> LiveCategoryResult { .init(hasMore: false, items: []) }
     func categoryRooms(_ category: LiveSubCategory, page: Int) async throws -> LiveCategoryResult { .init(hasMore: false, items: []) }
@@ -64,6 +74,7 @@ private final class FakeMobilePlayer: MobilePlaybackEngine {
     var volume = 1.0
     var onPrepareStream: (@MainActor (Bool) async throws -> PreparedPlaybackStream)?
     var onCommitStream: (@MainActor (PreparedPlaybackStream) -> Void)?
+    var onSustainedUnderrun: (@MainActor () -> Void)?
     var diagnosticFields: [String: String] { ["fixture": "mobile"] }
     var starts = 0
     var stops = 0
@@ -176,6 +187,57 @@ struct MobilePlaybackCheck {
         print("PASS: backgrounding an autoplay-off room does not strand its metadata load")
         try await checkMultiWatch()
         try await checkMultiWatchDanmaku()
+        try await checkWeakNetwork()
+    }
+
+    @MainActor private static func checkWeakNetwork() async throws {
+        let settings = AppSettings()
+        let saved = settings.data
+        defer { settings.data = saved }
+        settings.data.qualityPreference = .highest
+        settings.data.lastQualityName = "高"
+        settings.data.autoPlay = true
+        settings.data.autoLowerQuality = true
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let library = LibraryStore(storageDirectory: directory)
+        let site = FakeSite()
+        let player = FakeMobilePlayer()
+        let session = MobileRoomPlaybackSession(roomID: "weak", player: player, site: site, backgroundGrace: .milliseconds(10))
+        session.open(settings: settings, library: library)
+        await session.waitUntilLoaded()
+        precondition(player.starts == 1 && session.store.selectedQualityIndex == 0 && player.onSustainedUnderrun != nil)
+
+        // Background renewal resolves only the target CDN and keeps the other lines.
+        await site.setHonorLineSubset(true)
+        let current = session.store.playbackSelection.lineID
+        precondition(current == "a")
+        let rotated = try await player.onPrepareStream!(true)
+        let requested = await site.requestedLines
+        precondition(requested == [["b"]], "Rotation resolved more than the target line")
+        precondition(rotated.stream.lineIDs == ["a", "b"] && rotated.stream.lineID(at: rotated.lineIndex) == "b")
+        let kept = try await player.onPrepareStream!(false)
+        precondition(kept.stream.lineID(at: kept.lineIndex) == "a" && kept.stream.urls.count == 2)
+        print("PASS: background renewal resolves one CDN line and merges it into the line list")
+
+        player.onSustainedUnderrun!()
+        await session.waitUntilLoaded()
+        precondition(session.store.selectedQualityIndex == 1 && player.starts == 2)
+        precondition(settings.data.lastQualityName == "高", "Automatic downgrade overwrote the saved quality")
+        precondition(session.store.danmakuNotice?.contains("中") == true)
+        settings.data.autoLowerQuality = false
+        player.onSustainedUnderrun!()
+        await session.waitUntilLoaded()
+        precondition(session.store.selectedQualityIndex == 1 && player.starts == 2, "Disabled downgrade still switched")
+        settings.data.autoLowerQuality = true
+        player.onSustainedUnderrun!()
+        await session.waitUntilLoaded()
+        player.onSustainedUnderrun!()
+        await session.waitUntilLoaded()
+        precondition(session.store.selectedQualityIndex == 2 && player.starts == 3, "Downgrade went past the lowest quality")
+        session.close()
+        precondition(player.onSustainedUnderrun == nil)
+        print("PASS: sustained underruns lower quality one step for this room only, honouring the setting")
     }
 
     @MainActor private static func checkMultiWatchDanmaku() async throws {

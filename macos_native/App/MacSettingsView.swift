@@ -83,8 +83,9 @@ struct MacSettingsView: View {
                 }
                 Toggle("进入直播间自动播放", isOn: $settings.data.autoPlay)
                 Toggle("显示视频分辨率", isOn: $settings.data.showResolutionBadge)
-                LabeledContent("自动播放缓冲", value: "约 4 秒")
-                Text("使用内存缓冲和后台换流减少中断，会增加少量直播延迟。网络长时间中断时仍可能暂停。")
+                Toggle("弱网自动降低清晰度", isOn: $settings.data.autoLowerQuality)
+                LabeledContent("自动播放缓冲", value: "2–6 秒自适应")
+                Text("使用内存缓冲和后台换流减少中断，网络不稳时缓冲会自动加大，带来少量直播延迟。断网期间暂停等待，网络恢复后自动续播。弱网降档只影响当前直播间。")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }
             Section("画中画") {

@@ -49,6 +49,7 @@ final class MacRoomSession {
             guard let self, self.opened else { return }
             self.store.commitReplacementStream(selection)
         }
+        player.onSustainedUnderrun = { [weak self] in self?.lowerQualityForWeakNetwork() }
         LiveDiagnostics.record("room.open", roomID: roomID, fields: ["player": player.diagnosticID])
         loadRoom(autoplay: settings.data.autoPlay)
         telemetry = Task { [weak self] in
@@ -128,6 +129,24 @@ final class MacRoomSession {
         }
     }
 
+    /// Weak-network downgrade applies to this window only; the default preference is untouched.
+    private func lowerQualityForWeakNetwork() {
+        guard opened, !isWorking, player.isActive, settings?.data.autoLowerQuality == true,
+              let index = store.lowerQualityIndex else { return }
+        let name = store.qualities[index].quality
+        LiveDiagnostics.record("room.autoLowerQuality", roomID: roomID, fields: ["quality": name])
+        let token = beginOperation()
+        let store = self.store
+        operation = Task { [weak self] in
+            let changed = await store.selectQuality(index, remember: false)
+            guard let self, self.isCurrent(token) else { return }
+            self.isWorking = false
+            guard changed, self.player.isActive, let url = store.currentStreamURL else { return }
+            store.danmakuNotice = "网络较差，已自动切换到\(name)"
+            self.player.start(url: url, headers: store.playURL?.headers)
+        }
+    }
+
     func switchLine() {
         guard !isWorking else { return }
         let wasActive = player.isActive
@@ -176,6 +195,7 @@ final class MacRoomSession {
         player.onNeedsFreshStream = nil
         player.onPrepareStream = nil
         player.onCommitStream = nil
+        player.onSustainedUnderrun = nil
         player.stop()
         let store = self.store
         Task { await store.stop() }
@@ -310,7 +330,9 @@ struct MacRoomView: View {
     @ViewBuilder private var statusOverlay: some View {
         switch session.player.state {
         case .playing: EmptyView()
-        case .connecting, .buffering: statusCard("正在连接直播…", loading: true)
+        case .connecting: statusCard("正在连接直播…", loading: true)
+        case .buffering: statusCard("缓冲中…", loading: true)
+        case .waitingForNetwork: statusCard("网络已断开，恢复后自动续播", loading: true)
         case .reconnecting(let attempt): statusCard("连接中断，正在重连（\(attempt)）", loading: true)
         case .failed(let reason): statusCard(session.store.offlineNotice ?? reason, loading: false)
         case .idle:
