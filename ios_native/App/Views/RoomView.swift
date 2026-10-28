@@ -49,8 +49,9 @@ struct RoomView: View {
             } content: {
                 VStack(spacing: 0) {
                     HStack {
-                        Label("实时弹幕", systemImage: "text.bubble")
-                            .font(.subheadline.weight(.semibold))
+                        Text("实时弹幕")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.secondary)
                         Spacer()
                     }
                     .padding(.horizontal, 16)
@@ -74,18 +75,6 @@ struct RoomView: View {
                     Label("录像", systemImage: "play.rectangle.on.rectangle")
                 }
                 .accessibilityLabel("查看主播的直播录像")
-            }
-            ToolbarSpacer(.fixed, placement: .topBarTrailing)
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    guard let detail = store.detail else { return }
-                    library.toggleFollow(detail: detail)
-                } label: {
-                    Label(isFollowed ? "取消关注" : "关注", systemImage: isFollowed ? "star.fill" : "star")
-                }
-                .disabled(store.detail == nil)
-                .tint(isFollowed ? Theme.accent : nil)
-                .accessibilityLabel(isFollowed ? "取消关注" : "关注")
             }
         }
         .sheet(isPresented: $choosingAdditionalRooms, onDismiss: addSelectedRooms) {
@@ -212,6 +201,7 @@ struct RoomView: View {
                     Spacer(minLength: 0)
                     controlBar
                 }
+                .transition(.opacity)
             }
         }
         .animation(.easeInOut(duration: 0.2), value: controlsVisible)
@@ -538,11 +528,11 @@ struct RoomView: View {
         if let size = player.videoSize, store.showResolutionBadge {
             // 用 description 拼接，避免 Text 插值对 Int 自动加千位分隔符
             Text("\(Int(size.width).description)×\(Int(size.height).description)")
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: 11, weight: .medium))
                 .monospacedDigit()
                 .foregroundStyle(.white)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 4)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
                 .glassEffect(.regular, in: .capsule)
         }
     }
@@ -756,58 +746,59 @@ struct RoomView: View {
 
     // MARK: - 信息区
 
+    /// 标题在上；主播、热度和关注按钮在同一行——关注属于主播，不属于页面。
     private var infoSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                AsyncImage(url: URL(string: store.detail?.userAvatar ?? "")) { phase in
-                    if case .success(let image) = phase {
-                        image.resizable().scaledToFill()
-                    } else {
-                        Circle().fill(.quaternary)
-                    }
-                }
-                .frame(width: 40, height: 40)
-                .clipShape(.circle)
+        VStack(alignment: .leading, spacing: 12) {
+            Text(store.detail?.title ?? fallbackTitle)
+                .font(.headline)
+                .lineLimit(2)
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(store.detail?.title ?? fallbackTitle)
-                        .font(.subheadline.weight(.semibold))
-                        .lineLimit(2)
-                    Text(store.detail?.userName ?? "")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                AvatarImage(url: store.detail?.userAvatar ?? "", name: store.detail?.userName ?? "",
+                            size: 36, live: store.detail?.isLiving == true)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(store.detail?.userName ?? " ")
+                        .font(.subheadline.weight(.medium))
                         .lineLimit(1)
                     ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 8) { roomStatistics }
-                        VStack(alignment: .leading, spacing: 3) { roomStatistics }
+                        HStack(spacing: 10) { roomStatistics }
+                        VStack(alignment: .leading, spacing: 2) { roomStatistics }
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .labelStyle(CompactLabelStyle())
                 }
 
-                Spacer(minLength: 0)
+                Spacer(minLength: 8)
+
+                FollowButton(isFollowed: isFollowed) {
+                    guard let detail = store.detail else { return }
+                    library.toggleFollow(detail: detail)
+                }
+                .disabled(store.detail == nil)
             }
 
             if let notice = store.danmakuNotice {
                 Text(notice)
-                    .font(.caption2)
+                    .font(.caption)
                     .foregroundStyle(.orange)
                     .lineLimit(2)
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .overlay(alignment: .bottom) { Divider() }
+        .padding(.vertical, 14)
+        .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 0.5) }
     }
 
     @ViewBuilder
     private var roomStatistics: some View {
         if let online = store.detail?.online, online > 0 {
-            Label(Theme.formatHot(online), systemImage: "flame.fill")
+            Label(Theme.formatHot(online), systemImage: "flame")
                 .fixedSize(horizontal: true, vertical: false)
         }
         if let duration = store.detail?.liveDuration {
-            Label(Theme.formatDuration(duration), systemImage: "clock")
+            Label("已播 " + Theme.formatDuration(duration), systemImage: "clock")
                 .fixedSize(horizontal: true, vertical: false)
         }
     }

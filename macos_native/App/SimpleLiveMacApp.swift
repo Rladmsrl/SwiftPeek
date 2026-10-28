@@ -16,12 +16,11 @@ struct SimpleLiveMacApp: App {
                 .environment(followTransfer)
                 .environment(settings)
                 .environment(library)
-                .tint(MacDesign.accent)
+                .tint(Theme.accent)
                 .preferredColorScheme(settings.data.appearance.colorScheme)
                 .frame(minWidth: 900, minHeight: 620)
         }
         .defaultSize(width: 1240, height: 820)
-        .windowStyle(.hiddenTitleBar)
         .defaultLaunchBehavior(.presented)
         .commands {
             MacWindowCommands()
@@ -35,7 +34,7 @@ struct SimpleLiveMacApp: App {
                 MacRoomView(roomID: roomID)
                     .environment(settings)
                     .environment(library)
-                    .tint(MacDesign.accent)
+                    .tint(Theme.accent)
                     .preferredColorScheme(settings.data.appearance.colorScheme)
                     .frame(minWidth: 760, minHeight: 500)
             }
@@ -51,7 +50,7 @@ struct SimpleLiveMacApp: App {
                 MacReplayView(route: route)
                     .environment(settings)
                     .environment(library)
-                    .tint(MacDesign.accent)
+                    .tint(Theme.accent)
                     .preferredColorScheme(settings.data.appearance.colorScheme)
                     .frame(minWidth: 820, minHeight: 540)
             }
@@ -65,7 +64,7 @@ struct SimpleLiveMacApp: App {
             MacSettingsView()
                 .environment(settings)
                 .environment(library)
-                .tint(MacDesign.accent)
+                .tint(Theme.accent)
                 .preferredColorScheme(settings.data.appearance.colorScheme)
         }
     }

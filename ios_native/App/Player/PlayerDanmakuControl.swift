@@ -27,8 +27,10 @@ struct PlayerDanmakuControl: View {
                 isVisible.toggle()
                 onToggle()
             } label: {
+                // 关闭时加删除线，不只靠透明度区分开关
                 Text("弹幕").font(.system(size: isCompact ? 11 : 14, weight: .semibold))
-                    .foregroundStyle(.white.opacity(isVisible ? 1 : 0.45))
+                    .strikethrough(!isVisible, color: .white.opacity(0.8))
+                    .foregroundStyle(.white.opacity(isVisible ? 1 : 0.55))
                     .frame(width: max(36, controlHeight), height: controlHeight).contentShape(.rect)
             }
             .accessibilityLabel(isVisible ? "隐藏弹幕" : "显示弹幕")

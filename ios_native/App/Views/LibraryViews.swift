@@ -3,49 +3,54 @@ import SwiftUI
 
 // MARK: - 关注
 
+/// 正在直播的主播排在最前；状态尚未刷新时不分组，保持用户的关注顺序。
 struct FollowView: View {
     @Environment(LibraryStore.self) private var library
     @State private var path = NavigationPath()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var live: [FollowedRoom] { library.follows.filter { library.liveStatus[$0.roomID] == true } }
+    private var rest: [FollowedRoom] { library.follows.filter { library.liveStatus[$0.roomID] != true } }
 
     var body: some View {
         NavigationStack(path: $path) {
             Group {
                 if library.follows.isEmpty {
                     ContentUnavailableView {
-                        Label("还没有关注的主播", systemImage: "star")
+                        Label("还没有关注的主播", systemImage: "heart")
                     } description: {
-                        Text("在直播间右上角点星标即可关注")
+                        Text("在直播间点主播旁的“关注”\n下次就能在这里找到")
+                    } actions: {
+                        FollowTransferActions().buttonStyle(.bordered)
                     }
                 } else {
                     List {
-                        ForEach(library.follows) { item in
-                            NavigationLink(
-                                value: RoomRoute(roomID: item.roomID, title: item.title)
-                            ) {
-                                FollowRow(item: item, isLive: library.liveStatus[item.roomID])
-                            }
-                            .contextMenu {
-                                Button("查看录像", systemImage: "play.rectangle.on.rectangle") {
-                                    path.append(ReplayRoute(roomID: item.roomID))
-                                }
-                            }
-                            .swipeActions(edge: .leading) {
-                                Button("录像", systemImage: "play.rectangle.on.rectangle") {
-                                    path.append(ReplayRoute(roomID: item.roomID))
-                                }
-                                .tint(Theme.accent)
+                        if !live.isEmpty {
+                            Section {
+                                rows(live)
+                            } header: {
+                                Text("正在直播 · \(live.count)")
                             }
                         }
-                        .onDelete { library.removeFollows(at: $0) }
+                        Section {
+                            rows(rest)
+                        } header: {
+                            if !live.isEmpty { Text("未开播") }
+                        }
+                        Section {
+                        } footer: {
+                            VStack(alignment: .leading, spacing: 10) {
+                                FollowTransferActions()
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                Text("通过隔空投送，把关注合并到另一台设备。")
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 4)
+                        }
                     }
+                    .animation(reduceMotion ? nil : Theme.glide, value: live.map(\.roomID))
                 }
-            }
-            .safeAreaBar(edge: .bottom) {
-                VStack(spacing: 7) {
-                    FollowTransferActions().buttonStyle(.glass).controlSize(.regular)
-                    Text("通过隔空投送，把关注和观看历史合并到另一台设备")
-                        .font(.caption2).foregroundStyle(.secondary)
-                }.padding(12).frame(maxWidth: .infinity).background(.bar)
             }
             .navigationTitle("关注")
             .liveDestinations()
@@ -66,6 +71,30 @@ struct FollowView: View {
             }
         }
     }
+
+    private func rows(_ items: [FollowedRoom]) -> some View {
+        ForEach(items) { item in
+            NavigationLink(value: RoomRoute(roomID: item.roomID, title: item.title)) {
+                FollowRow(item: item, isLive: library.liveStatus[item.roomID])
+            }
+            .contextMenu {
+                Button("查看录像", systemImage: "play.rectangle.on.rectangle") {
+                    path.append(ReplayRoute(roomID: item.roomID))
+                }
+            }
+            .swipeActions(edge: .leading) {
+                Button("录像", systemImage: "play.rectangle.on.rectangle") {
+                    path.append(ReplayRoute(roomID: item.roomID))
+                }
+                .tint(Theme.accent)
+            }
+        }
+        .onDelete { offsets in
+            // 分组后的下标映射回关注列表本身的下标
+            let ids = Set(offsets.map { items[$0].roomID })
+            library.removeFollows(at: IndexSet(library.follows.indices.filter { ids.contains(library.follows[$0].roomID) }))
+        }
+    }
 }
 
 private struct FollowRow: View {
@@ -75,27 +104,11 @@ private struct FollowRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            AsyncImage(url: URL(string: item.avatar)) { phase in
-                if case .success(let image) = phase {
-                    image.resizable().scaledToFill()
-                } else {
-                    Circle().fill(.quaternary)
-                }
-            }
-            .frame(width: 44, height: 44)
-            .clipShape(.circle)
-            .overlay(alignment: .bottomTrailing) {
-                if isLive == true {
-                    Circle()
-                        .fill(Theme.accent)
-                        .frame(width: 11, height: 11)
-                        .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 2))
-                }
-            }
+            AvatarImage(url: item.avatar, name: item.userName, size: 44, live: isLive == true)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.userName)
-                    .font(.subheadline.weight(.medium))
+                    .font(.body.weight(.medium))
                     .lineLimit(1)
                 Text(item.title)
                     .font(.caption)
@@ -105,26 +118,11 @@ private struct FollowRow: View {
 
             Spacer(minLength: 0)
 
-            statusLabel
+            if isLive == true { LiveDot() }
         }
-    }
-
-    @ViewBuilder
-    private var statusLabel: some View {
-        switch isLive {
-        case .some(true):
-            Text("直播中")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(Theme.accent)
-        case .some(false):
-            Text("未开播")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-        case nil:
-            Text("—")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-        }
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(isLive == true ? "直播中" : isLive == false ? "未开播" : "")
     }
 }
 
@@ -163,7 +161,8 @@ struct HistoryView: View {
     @ViewBuilder
     private var content: some View {
         if library.history.isEmpty {
-            ContentUnavailableView("暂无观看记录", systemImage: "clock.arrow.circlepath")
+            ContentUnavailableView("暂无观看记录", systemImage: "clock.arrow.circlepath",
+                                   description: Text("打开过的直播间会出现在这里。"))
         } else {
             List {
                 ForEach(library.history) { item in
@@ -185,15 +184,16 @@ private struct HistoryRow: View {
             CoverImage(url: item.cover, cornerRadius: 8)
                 .frame(width: 96)
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(item.title)
-                    .font(.subheadline)
-                    .lineLimit(2)
+            VStack(alignment: .leading, spacing: 3) {
                 Text(item.userName)
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(1)
+                Text(item.title)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 Text(item.watchedAt.formatted(.relative(presentation: .named)))
-                    .font(.caption2)
+                    .font(.caption)
                     .foregroundStyle(.tertiary)
             }
 
@@ -215,12 +215,33 @@ struct MineView: View {
         NavigationStack(path: $router.minePath) {
             List {
                 Section {
+                    HStack(spacing: 14) {
+                        Image("BrandIcon")
+                            .resizable().scaledToFit()
+                            .frame(width: 52, height: 52)
+                            .clipShape(.rect(cornerRadius: 12))
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("SwiftPeek").font(.headline)
+                            Text("版本 \(Self.appVersion)").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                    .accessibilityElement(children: .combine)
+                }
+
+                Section {
+                    // 行图标用中性灰，品牌橙只留给选中与直播状态
                     NavigationLink(value: MineRoute.history) {
-                        Label("观看历史", systemImage: "clock.arrow.circlepath")
-                            .badge(library.history.count)
+                        Label { Text("观看历史") } icon: {
+                            Image(systemName: "clock.arrow.circlepath").foregroundStyle(.secondary)
+                        }
+                        .badge(library.history.count)
                     }
                     NavigationLink(value: MineRoute.settings) {
-                        Label("设置", systemImage: "gearshape")
+                        Label { Text("设置") } icon: {
+                            Image(systemName: "gearshape").foregroundStyle(.secondary)
+                        }
                     }
                 }
 
@@ -234,11 +255,6 @@ struct MineView: View {
                             }
                         }
                     }
-                }
-
-                Section("关于") {
-                    LabeledContent("应用", value: "SwiftPeek")
-                    LabeledContent("版本", value: Self.appVersion)
                 }
             }
             .navigationTitle("我的")

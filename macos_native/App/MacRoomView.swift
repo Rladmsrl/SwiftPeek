@@ -216,20 +216,36 @@ struct MacRoomView: View {
     }
 
     var body: some View {
-        VStack(spacing: 18) {
-            roomHeader
-            GeometryReader { geometry in
-                HStack(spacing: 16) {
-                    video.frame(maxWidth: .infinity, maxHeight: .infinity)
-                    if showChat {
-                        chat.frame(width: geometry.size.width < 1000 ? 230 : 280)
-                    }
+        GeometryReader { geometry in
+            HStack(spacing: 12) {
+                video.frame(maxWidth: .infinity, maxHeight: .infinity)
+                if showChat {
+                    sidePanel.frame(width: geometry.size.width < 1000 ? 260 : 300)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
-            bottomBar
-        }.padding(20)
-        .background(MacBackdrop())
+        }
+        .padding(12)
         .navigationTitle(session.store.detail?.userName ?? "斗鱼 · \(roomID)")
+        .navigationSubtitle(session.store.detail?.title ?? "")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    openWindow(id: "replay", value: ReplayRoute(roomID: session.store.detail?.roomID ?? roomID))
+                } label: { Label("录像", systemImage: "play.rectangle.on.rectangle") }
+                    .help("查看主播的直播录像")
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    withAnimation(reduceMotion ? nil : Theme.glide) { showChat.toggle() }
+                } label: { Label("弹幕列表", systemImage: "sidebar.right") }
+                    .help("显示 / 隐藏弹幕列表")
+            }
+        }
+        .background {
+            Button("") { window?.toggleFullScreen(nil) }
+                .keyboardShortcut("f", modifiers: [.command, .control]).hidden()
+        }
         .background(WindowReader { resolved in
             window = resolved
             resolved?.isReleasedWhenClosed = false
@@ -247,44 +263,6 @@ struct MacRoomView: View {
     }
 
     private var followed: Bool { library.isFollowed(session.store.detail?.roomID ?? roomID) }
-
-    private var roomHeader: some View {
-        HStack(spacing: 13) {
-            MacAvatar(url: session.store.detail?.userAvatar ?? "", name: session.store.detail?.userName ?? "斗鱼", size: 44)
-            VStack(alignment: .leading, spacing: 6) {
-                Text(session.store.detail?.title ?? "直播间 \(roomID)")
-                    .font(.system(size: 17, weight: .semibold)).lineLimit(1)
-                HStack(spacing: 7) {
-                    Text(session.store.detail?.userName ?? "斗鱼直播").foregroundStyle(.secondary)
-                    Text("·").foregroundStyle(.tertiary)
-                    Text("\(roomID)").foregroundStyle(.tertiary)
-                }.font(.system(size: 11))
-            }
-            Spacer(minLength: 12)
-            GlassEffectContainer(spacing: 10) {
-                HStack(spacing: 10) {
-                    Button {
-                        if let detail = session.store.detail { library.toggleFollow(detail: detail) }
-                    } label: {
-                        Label(followed ? "已关注" : "关注", systemImage: followed ? "heart.fill" : "heart")
-                            .font(.system(size: 12, weight: .medium)).padding(.horizontal, 8).padding(.vertical, 4)
-                    }.buttonStyle(.glass).tint(followed ? MacDesign.accent : nil)
-                        .disabled(session.store.detail == nil)
-                    Button {
-                        openWindow(id: "replay", value: ReplayRoute(roomID: session.store.detail?.roomID ?? roomID))
-                    } label: {
-                        Label("录像", systemImage: "play.rectangle.on.rectangle")
-                            .font(.system(size: 12, weight: .medium)).padding(.horizontal, 8).padding(.vertical, 4)
-                    }.buttonStyle(.glass).help("查看主播的直播录像")
-                    MacIconButton(symbol: "sidebar.right", help: "显示 / 隐藏弹幕列表", active: showChat) {
-                        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) { showChat.toggle() }
-                    }
-                    MacIconButton(symbol: "arrow.up.left.and.arrow.down.right", help: "全屏") { window?.toggleFullScreen(nil) }
-                        .keyboardShortcut("f", modifiers: [.command, .control])
-                }
-            }
-        }
-    }
 
     private var video: some View {
         ZStack {
@@ -323,8 +301,7 @@ struct MacRoomView: View {
                     .transition(.opacity)
             }
         }
-        .clipShape(.rect(cornerRadius: 18))
-        .overlay { RoundedRectangle(cornerRadius: 18).strokeBorder(.white.opacity(0.08), lineWidth: 1).allowsHitTesting(false) }
+        .clipShape(.rect(cornerRadius: 12))
         .onHover { hovering in
             withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) { controlsVisible = hovering }
         }
@@ -359,7 +336,7 @@ struct MacRoomView: View {
             else { Image(systemName: "play.tv").font(.system(size: 32, weight: .light)).foregroundStyle(.secondary) }
             Text(text).font(.system(size: 13, weight: .medium)).multilineTextAlignment(.center).textSelection(.enabled)
             if !loading {
-                Button("重新加载直播间") { session.retry() }.buttonStyle(.glassProminent).tint(MacDesign.accent)
+                Button("重新加载直播间") { session.retry() }.buttonStyle(.glassProminent).tint(Theme.accent)
             }
         }.padding(28).frame(maxWidth: 340)
             .glassEffect(.regular, in: .rect(cornerRadius: 24))
@@ -416,76 +393,84 @@ struct MacRoomView: View {
                 Button { session.pip.toggle() } label: { Image(systemName: session.pipActive ? "pip.exit" : "pip.enter") }
                     .help("画中画").disabled(!session.pipActive && !session.player.isActive)
             }
-        }.buttonStyle(MacPlayerButtonStyle()).font(.system(size: 13)).foregroundStyle(.white)
-    }
-
-    private var bottomBar: some View {
-        HStack(spacing: 8) {
-            Circle().fill(session.player.state == .playing ? MacDesign.green : .secondary.opacity(0.5)).frame(width: 5, height: 5)
-            Text(playbackLabel).font(.system(size: 11)).foregroundStyle(.secondary)
-            Spacer()
-            Text("双击画面全屏  ·  空格播放 / 停止").font(.system(size: 10)).foregroundStyle(.tertiary)
             Menu {
                 Button("重新加载直播间") { session.retry() }
                 Button("切换播放线路") { session.switchLine() }.disabled(session.store.lineCount < 2 || session.isWorking)
                 Divider()
                 Button("记录当前播放状态") { session.snapshot(event: "user.mark") }
                 Button("打开播放日志", action: MacDiagnostics.reveal)
-            } label: { Image(systemName: "ellipsis").font(.system(size: 14)) }
-                .menuStyle(.borderlessButton).frame(width: 28)
-        }.padding(.horizontal, 3)
+            } label: { Image(systemName: "ellipsis") }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .padding(.horizontal, 6)
+                .help("更多")
+        }.buttonStyle(MacPlayerButtonStyle()).font(.system(size: 13)).foregroundStyle(.white).tint(.white)
     }
 
-    private var playbackLabel: String {
-        switch session.player.state {
-        case .playing: "正在直播"
-        case .connecting, .buffering: "连接中"
-        case .reconnecting: "正在重新连接"
-        case .failed: "播放已中断"
-        case .idle: "等待播放"
-        }
-    }
+    // MARK: 侧栏：主播信息 + 实时弹幕
 
-    private var chat: some View {
+    private var sidePanel: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("实时弹幕").font(.system(size: 13, weight: .semibold))
-                Spacer()
-                Text("LIVE").font(.system(size: 9, weight: .bold, design: .rounded)).tracking(1.2).foregroundStyle(MacDesign.accent)
-            }.padding(18)
-            Rectangle().fill(.primary.opacity(0.05)).frame(height: 1)
+            roomInfo.padding(14)
+            Rectangle().fill(Theme.hairline).frame(height: 1)
             if let notice = session.store.danmakuNotice {
-                Text(notice).font(.system(size: 10)).foregroundStyle(.secondary).padding(12)
+                Text(notice).font(.system(size: 11)).foregroundStyle(.secondary)
+                    .padding(.horizontal, 14).padding(.top, 10)
             }
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 16) {
+                    LazyVStack(alignment: .leading, spacing: 12) {
                         if session.store.messages.isEmpty {
-                            VStack(spacing: 10) {
-                                Image(systemName: "bubble.left.and.bubble.right").font(.system(size: 25, weight: .light))
-                                Text("一起等下一条弹幕").font(.system(size: 11))
-                            }.foregroundStyle(.tertiary).frame(maxWidth: .infinity).padding(.vertical, 50)
+                            Text(session.store.phase == .loading ? "正在连接弹幕…" : "还没有弹幕")
+                                .font(.system(size: 12)).foregroundStyle(.tertiary)
+                                .frame(maxWidth: .infinity).padding(.vertical, 48)
                         }
                         ForEach(session.store.messages) { message in
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text(message.userName).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
-                                Text(message.message).font(.system(size: 12)).foregroundStyle(.primary.opacity(0.85))
-                                    .lineSpacing(3).textSelection(.enabled)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(message.userName).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                                Text(message.message).font(.system(size: 13)).foregroundStyle(message.color.macListForeground)
+                                    .lineSpacing(2).textSelection(.enabled)
                             }.id(message.id).frame(maxWidth: .infinity, alignment: .leading)
                         }
-                    }.padding(16)
+                    }.padding(14)
                 }.scrollIndicators(.hidden)
                     .onChange(of: session.store.messages.last?.id) { _, id in
                         if followChat, let id { proxy.scrollTo(id, anchor: .bottom) }
                     }
             }
-            HStack {
-                Image(systemName: "bubble.right").font(.system(size: 11))
-                Text("与此刻同频").font(.system(size: 10))
-                Spacer()
-                Toggle("跟随", isOn: $followChat).toggleStyle(.checkbox).font(.system(size: 10))
-            }.foregroundStyle(.tertiary).padding(14)
-        }.macSurface(radius: 18)
+            Toggle("跟随最新弹幕", isOn: $followChat).toggleStyle(.checkbox)
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+                .padding(.horizontal, 14).padding(.vertical, 10)
+        }
+        .macPanel()
+    }
+
+    /// 主播、热度与关注放在同一行——与 iOS 播放页的信息行一致。
+    private var roomInfo: some View {
+        HStack(spacing: 10) {
+            AvatarImage(url: session.store.detail?.userAvatar ?? "", name: session.store.detail?.userName ?? "斗",
+                        size: 36, live: session.store.detail?.isLiving == true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(session.store.detail?.userName ?? "直播间 \(roomID)")
+                    .font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                HStack(spacing: 8) {
+                    if let online = session.store.detail?.online, online > 0 {
+                        Label(Theme.formatHot(online), systemImage: "flame")
+                    }
+                    if let duration = session.store.detail?.liveDuration {
+                        Label(Theme.formatDuration(duration), systemImage: "clock")
+                    }
+                    if session.store.detail == nil { Text(roomID) }
+                }
+                .labelStyle(CompactLabelStyle()).monospacedDigit()
+                .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 6)
+            FollowButton(isFollowed: followed) {
+                if let detail = session.store.detail { library.toggleFollow(detail: detail) }
+            }
+            .controlSize(.small)
+            .disabled(session.store.detail == nil)
+        }
     }
 }
 

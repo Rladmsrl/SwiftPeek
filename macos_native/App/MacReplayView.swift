@@ -38,21 +38,34 @@ struct MacReplayView: View {
     }
 
     var body: some View {
-        VStack(spacing: 16) {
-            header
-            GeometryReader { geometry in
-                HStack(spacing: 16) {
-                    video.frame(maxWidth: .infinity, maxHeight: .infinity)
-                    if showPanel {
-                        sidePanel.frame(width: geometry.size.width < 1000 ? 268 : 312)
-                            .transition(.move(edge: .trailing).combined(with: .opacity))
-                    }
+        GeometryReader { geometry in
+            HStack(spacing: 12) {
+                video.frame(maxWidth: .infinity, maxHeight: .infinity)
+                if showPanel {
+                    sidePanel.frame(width: geometry.size.width < 1000 ? 280 : 320)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
         }
-        .padding(20)
-        .background(MacBackdrop())
-        .navigationTitle(detail.map { "\($0.authorName) · 录像" } ?? "录像")
+        .padding(12)
+        .navigationTitle(detail?.authorName ?? list?.author?.name ?? "录像")
+        .navigationSubtitle(detail?.authorName ?? list?.author?.name == nil ? "" : "直播录像")
+        .toolbar {
+            if let roomID {
+                ToolbarItem(placement: .primaryAction) {
+                    Button { openWindow(id: "room", value: roomID) } label: {
+                        Label("进入直播间", systemImage: "dot.radiowaves.left.and.right")
+                    }
+                    .help("进入直播间")
+                }
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    withAnimation(reduceMotion ? nil : Theme.glide) { showPanel.toggle() }
+                } label: { Label("侧栏", systemImage: "sidebar.right") }
+                    .help("显示 / 隐藏侧栏")
+            }
+        }
         .background(WindowReader { resolved in
             window = resolved
             resolved?.isReleasedWhenClosed = false
@@ -92,51 +105,7 @@ struct MacReplayView: View {
         }
     }
 
-    // MARK: 顶部信息
-
-    private var header: some View {
-        HStack(spacing: 13) {
-            MacAvatar(url: detail?.authorAvatar ?? list?.author?.avatar ?? "",
-                      name: detail?.authorName ?? list?.author?.name ?? "录", size: 44)
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    Text("录像").font(.system(size: 10, weight: .semibold))
-                        .padding(.horizontal, 7).padding(.vertical, 3)
-                        .foregroundStyle(MacDesign.accent)
-                        .background(MacDesign.accent.opacity(0.12), in: .capsule)
-                    Text(detail?.title ?? (session.phase == .loading ? "正在打开录像…" : "选择一段录像"))
-                        .font(.system(size: 17, weight: .semibold)).lineLimit(1)
-                }
-                HStack(spacing: 7) {
-                    Text(detail?.authorName ?? list?.author?.name ?? "斗鱼录像").foregroundStyle(.secondary)
-                    if let detail {
-                        if let date = detail.recordedAt { dot; Text(date, format: .dateTime.month().day().hour().minute()) }
-                        dot; Text(ReplayPlayer.format(detail.duration))
-                        if detail.viewCount > 0 { dot; Text("\(Theme.formatHot(detail.viewCount)) 次播放") }
-                        if detail.danmakuCount > 0 { dot; Text("\(Theme.formatHot(detail.danmakuCount)) 条弹幕") }
-                    }
-                }.font(.system(size: 11)).foregroundStyle(.tertiary)
-            }
-            Spacer(minLength: 12)
-            GlassEffectContainer(spacing: 10) {
-                HStack(spacing: 10) {
-                    if let roomID {
-                        Button { openWindow(id: "room", value: roomID) } label: {
-                            Label("进入直播间", systemImage: "dot.radiowaves.left.and.right")
-                                .font(.system(size: 12, weight: .medium)).padding(.horizontal, 8).padding(.vertical, 4)
-                        }.buttonStyle(.glass)
-                    }
-                    MacIconButton(symbol: "sidebar.right", help: "显示 / 隐藏侧栏", active: showPanel) {
-                        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.22)) { showPanel.toggle() }
-                    }
-                    MacIconButton(symbol: "arrow.up.left.and.arrow.down.right", help: "全屏（⌃⌘F）") { window?.toggleFullScreen(nil) }
-                        .keyboardShortcut("f", modifiers: [.command, .control])
-                }
-            }
-        }
-    }
-
-    private var dot: some View { Text("·").foregroundStyle(.quaternary) }
+    private var dot: some View { Text("·").foregroundStyle(.tertiary) }
 
     // MARK: 播放区
 
@@ -165,8 +134,7 @@ struct MacReplayView: View {
                     .transition(.opacity)
             }
         }
-        .clipShape(.rect(cornerRadius: 18))
-        .overlay { RoundedRectangle(cornerRadius: 18).strokeBorder(.white.opacity(0.08), lineWidth: 1).allowsHitTesting(false) }
+        .clipShape(.rect(cornerRadius: 12))
         .contentShape(.rect)
         .onContinuousHover { phase in
             switch phase {
@@ -245,7 +213,7 @@ struct MacReplayView: View {
                     .buttonStyle(.glass)
                 if let next = session.nextSegment {
                     Button { session.open(hashID: next.hashID, start: 0) } label: { Label("下一段 · \(next.title)", systemImage: "forward.end.fill") }
-                        .buttonStyle(.glassProminent).tint(MacDesign.accent)
+                        .buttonStyle(.glassProminent).tint(Theme.accent)
                 }
             }
         }.padding(28).foregroundStyle(.white)
@@ -257,7 +225,7 @@ struct MacReplayView: View {
             Image(systemName: symbol).font(.system(size: 30, weight: .light)).foregroundStyle(.secondary)
             Text(text).font(.system(size: 13, weight: .medium)).multilineTextAlignment(.center).textSelection(.enabled)
             if let action {
-                Button(action, action: perform).buttonStyle(.glassProminent).tint(MacDesign.accent)
+                Button(action, action: perform).buttonStyle(.glassProminent).tint(Theme.accent)
             }
         }.padding(28).frame(maxWidth: 360)
             .glassEffect(.regular, in: .rect(cornerRadius: 24))
@@ -341,7 +309,7 @@ struct MacReplayView: View {
                 Button { player.togglePiP() } label: { Image(systemName: player.isPiPActive ? "pip.exit" : "pip.enter") }
                     .help("画中画")
             }
-        }.buttonStyle(MacPlayerButtonStyle()).font(.system(size: 13)).foregroundStyle(.white)
+        }.buttonStyle(MacPlayerButtonStyle()).font(.system(size: 13)).foregroundStyle(.white).tint(.white)
     }
 
     private func speedName(_ rate: Float) -> String {
@@ -358,79 +326,88 @@ struct MacReplayView: View {
             Button("") { session.skip(by: 60) }.keyboardShortcut(.rightArrow, modifiers: .shift)
             Button("") { player.isMuted.toggle() }.keyboardShortcut("m", modifiers: [])
             Button("") { session.isDanmakuVisible.toggle() }.keyboardShortcut("d", modifiers: [])
+            Button("") { window?.toggleFullScreen(nil) }.keyboardShortcut("f", modifiers: [.command, .control])
         }
         .opacity(0).allowsHitTesting(false).accessibilityHidden(true)
     }
 
     // MARK: 侧栏
 
+    /// 与 iOS 录像页同一结构：标题与元信息 → 分段选择 → 当前内容
     private var sidePanel: some View {
         VStack(spacing: 0) {
+            replayInfo.padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 12)
             Picker("侧栏内容", selection: $panel) {
                 ForEach(ReplayPanel.allCases) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented).labelsHidden()
-            .padding(14)
-            Rectangle().fill(.primary.opacity(0.05)).frame(height: 1)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 14).padding(.bottom, 12)
+            Rectangle().fill(Theme.hairline).frame(height: 1)
             switch panel {
             case .danmaku: danmakuPanel
             case .chapters: chapterPanel
             case .episodes: episodePanel
             }
-        }.macSurface(radius: 18)
+        }.macPanel()
+    }
+
+    private var replayInfo: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(detail?.title ?? (session.phase == .loading ? "正在打开录像…" : "选择一段录像"))
+                .font(.system(size: 13, weight: .semibold)).lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let detail {
+                HStack(spacing: 5) {
+                    if let date = detail.recordedAt { Text(date, format: .dateTime.month().day().hour().minute()); dot }
+                    Text(ReplayPlayer.format(detail.duration))
+                    if detail.danmakuCount > 0 { dot; Text("\(Theme.formatHot(detail.danmakuCount)) 条弹幕") }
+                }
+                .font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
+            }
+        }
     }
 
     private var danmakuPanel: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("弹幕回放").font(.system(size: 13, weight: .semibold))
-                Spacer()
-                if let count = detail?.danmakuCount, count > 0 {
-                    Text("共 \(Theme.formatHot(count)) 条").font(.system(size: 10)).foregroundStyle(.tertiary)
-                }
-            }.padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 6)
             if let notice = session.feed?.notice {
-                Text(notice).font(.system(size: 10)).foregroundStyle(.orange).padding(.horizontal, 16)
+                Text(notice).font(.system(size: 11)).foregroundStyle(.orange).padding(.horizontal, 14).padding(.top, 10)
             }
             let recent = session.feed?.recent ?? []
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 13) {
                         if recent.isEmpty {
-                            VStack(spacing: 10) {
-                                Image(systemName: "text.bubble").font(.system(size: 24, weight: .light))
-                                Text(session.feed?.isLoading == true ? "正在加载弹幕…" : "播放后，弹幕会随进度出现在这里")
-                                    .font(.system(size: 11)).multilineTextAlignment(.center)
-                            }.foregroundStyle(.tertiary).frame(maxWidth: .infinity).padding(.vertical, 60)
+                            Text(session.feed?.isLoading == true ? "正在加载弹幕…" : "播放后，弹幕会随进度出现在这里")
+                                .font(.system(size: 12)).multilineTextAlignment(.center)
+                                .foregroundStyle(.tertiary).frame(maxWidth: .infinity).padding(.vertical, 48)
                         }
                         ForEach(recent) { item in
                             Button { session.seek(to: item.offset) } label: { danmakuRow(item) }
                                 .buttonStyle(.plain).id(item.id)
                                 .help("跳到 \(ReplayPlayer.format(item.offset))")
                         }
-                    }.padding(16)
+                    }.padding(14)
                 }.scrollIndicators(.hidden)
                     .onChange(of: recent.last?.id) { _, id in
                         if followDanmaku, let id { proxy.scrollTo(id, anchor: .bottom) }
                     }
             }
-            HStack {
-                Image(systemName: "clock").font(.system(size: 10))
-                Text("随播放进度滚动").font(.system(size: 10))
-                Spacer()
-                Toggle("跟随", isOn: $followDanmaku).toggleStyle(.checkbox).font(.system(size: 10))
-            }.foregroundStyle(.tertiary).padding(14)
+            Toggle("跟随播放进度", isOn: $followDanmaku).toggleStyle(.checkbox)
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14).padding(.vertical, 10)
         }
     }
 
     private func danmakuRow(_ item: DouyuReplayDanmaku) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 9) {
             Text(ReplayPlayer.format(item.offset))
-                .font(.system(size: 9, weight: .medium, design: .rounded)).monospacedDigit()
-                .foregroundStyle(.tertiary).frame(width: 40, alignment: .leading)
+                .font(.system(size: 11)).monospacedDigit()
+                .foregroundStyle(.tertiary).frame(width: 44, alignment: .leading)
             VStack(alignment: .leading, spacing: 3) {
-                Text(item.userName).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary).lineLimit(1)
-                Text(item.text).font(.system(size: 12)).foregroundStyle(item.color.macListForeground)
+                Text(item.userName).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary).lineLimit(1)
+                Text(item.text).font(.system(size: 13)).foregroundStyle(item.color.macListForeground)
                     .lineSpacing(2).multilineTextAlignment(.leading)
             }
             Spacer(minLength: 0)
@@ -440,15 +417,12 @@ struct MacReplayView: View {
     private var chapterPanel: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 6) {
-                    Image(systemName: "sparkles").foregroundStyle(MacDesign.accent)
-                    Text("AI 章节").font(.system(size: 13, weight: .semibold))
-                    Spacer()
-                    Text("斗鱼自动生成").font(.system(size: 10)).foregroundStyle(.tertiary)
-                }.padding(.bottom, 4)
+                HStack(spacing: 5) {
+                    Image(systemName: "sparkles").foregroundStyle(Theme.accent)
+                    Text("斗鱼 AI 生成的章节").foregroundStyle(.secondary)
+                }.font(.system(size: 11)).padding(.horizontal, 4).padding(.bottom, 2)
                 if session.chapters.isEmpty {
                     MacEmptyState(symbol: "list.bullet.rectangle", title: "暂无章节", detail: "这段录像还没有 AI 章节。")
-                        .scaleEffect(0.85)
                 }
                 let current = session.currentChapter?.id
                 ForEach(session.chapters) { chapter in
@@ -456,40 +430,40 @@ struct MacReplayView: View {
                         chapterRow(chapter, current: chapter.id == current)
                     }.buttonStyle(.plain)
                 }
-            }.padding(16)
+            }.padding(14)
         }.scrollIndicators(.hidden)
     }
 
     private func chapterRow(_ chapter: DouyuReplayChapter, current: Bool) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 7) {
+                // 只有当前章节用品牌色胶囊，其余时间戳安静地排成一列
                 Text(ReplayPlayer.format(chapter.start))
-                    .font(.system(size: 10, weight: .semibold, design: .rounded)).monospacedDigit()
-                    .padding(.horizontal, 7).padding(.vertical, 3)
-                    .foregroundStyle(current ? .white : MacDesign.accent)
-                    .background(current ? MacDesign.accent : MacDesign.accent.opacity(0.12), in: .capsule)
+                    .font(.system(size: 11, weight: .semibold)).monospacedDigit()
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .foregroundStyle(current ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
+                    .background(current ? Theme.accent : Theme.softFill, in: .capsule)
                 if !chapter.tag.isEmpty {
-                    Text(chapter.tag).font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1)
+                    Text(chapter.tag).font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1)
                 }
                 if chapter.isContinued {
-                    Text("接上段").font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
-                        .padding(.horizontal, 5).padding(.vertical, 2).background(.quaternary, in: .capsule)
+                    Text("接上段").font(.system(size: 11)).foregroundStyle(.tertiary)
                 }
                 Spacer(minLength: 0)
                 if current {
-                    Image(systemName: "waveform").font(.system(size: 10)).foregroundStyle(MacDesign.accent)
+                    Image(systemName: "waveform").font(.system(size: 11)).foregroundStyle(Theme.accent)
                         .symbolEffect(.variableColor.iterative, isActive: player.isPlaying && !reduceMotion)
                 }
             }
-            Text(chapter.title).font(.system(size: 12.5, weight: .semibold)).lineLimit(2).multilineTextAlignment(.leading)
+            Text(chapter.title).font(.system(size: 13, weight: .semibold)).lineLimit(2).multilineTextAlignment(.leading)
             if !chapter.summary.isEmpty {
-                Text(chapter.summary).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(3)
+                Text(chapter.summary).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(3)
                     .lineSpacing(2).multilineTextAlignment(.leading)
             }
         }
-        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-        .background(current ? MacDesign.accent.opacity(0.07) : Color.primary.opacity(0.025), in: .rect(cornerRadius: 12))
-        .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(current ? MacDesign.accent.opacity(0.35) : .clear, lineWidth: 1) }
+        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+        .background(current ? Theme.accentSoft : .clear, in: .rect(cornerRadius: 10))
+        .macHoverFill(radius: 10)
         .contentShape(.rect)
     }
 
@@ -522,15 +496,15 @@ struct MacReplayView: View {
                 } else {
                     ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(.top, 30)
                 }
-            }.padding(16)
+            }.padding(14)
         }.scrollIndicators(.hidden)
     }
 
     private func sectionTitle(_ title: String, trailing: String) -> some View {
         HStack {
-            Text(title).font(.system(size: 13, weight: .semibold))
+            Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
             Spacer()
-            Text(trailing).font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1)
+            Text(trailing).font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1)
         }
     }
 
@@ -541,17 +515,17 @@ struct MacReplayView: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text(video.title).font(.system(size: 12, weight: .semibold)).lineLimit(1)
                 Text("第 \(index + 1) 段 · \(ReplayPlayer.format(video.duration))")
-                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
                 if playing {
-                    Label("正在播放", systemImage: "waveform").font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(MacDesign.accent)
+                    Label("正在播放", systemImage: "waveform").font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Theme.accent)
                 }
             }
             Spacer(minLength: 0)
         }
         .padding(8)
-        .background(playing ? MacDesign.accent.opacity(0.07) : .clear, in: .rect(cornerRadius: 12))
-        .contentShape(.rect)
+        .background(playing ? Theme.accentSoft : .clear, in: .rect(cornerRadius: 10))
+        .macHoverFill(radius: 10)
     }
 
     private func showRow(_ show: DouyuReplayShow) -> some View {
@@ -565,18 +539,17 @@ struct MacReplayView: View {
                 HStack(spacing: 5) {
                     Text(show.relativeDate)
                     if !show.startClock.isEmpty { Text(show.startClock) }
-                }.font(.system(size: 10)).foregroundStyle(.secondary)
+                }.font(.system(size: 11)).foregroundStyle(.secondary)
                 HStack(spacing: 5) {
-                    if !show.totalDuration.isEmpty { Label(show.totalDuration, systemImage: "clock") }
-                    if show.partCount > 1 { Text("\(show.partCount) 段") }
-                }.font(.system(size: 10)).foregroundStyle(.tertiary).labelStyle(.titleAndIcon)
+                    if !show.totalDuration.isEmpty { Text(show.totalDuration) }
+                    if show.partCount > 1 { Text("· \(show.partCount) 段") }
+                }.font(.system(size: 11)).foregroundStyle(.tertiary).monospacedDigit()
             }
             Spacer(minLength: 0)
         }
         .padding(8)
-        .background(current ? MacDesign.accent.opacity(0.07) : .clear, in: .rect(cornerRadius: 12))
-        .contentShape(.rect)
-        .macHover(radius: 12)
+        .background(current ? Theme.accentSoft : .clear, in: .rect(cornerRadius: 10))
+        .macHoverFill(radius: 10)
     }
 
     private func thumbnail(_ url: String, fraction: Double?, playing: Bool) -> some View {
@@ -585,13 +558,13 @@ struct MacReplayView: View {
             .overlay(alignment: .bottom) {
                 if let fraction, fraction > 0 {
                     GeometryReader { geometry in
-                        Capsule().fill(MacDesign.accent).frame(width: geometry.size.width * fraction, height: 3)
+                        Capsule().fill(Theme.accent).frame(width: geometry.size.width * fraction, height: 3)
                     }.frame(height: 3).padding(.horizontal, 5).padding(.bottom, 4)
                 }
             }
             .overlay {
                 if playing {
-                    RoundedRectangle(cornerRadius: 8).strokeBorder(MacDesign.accent, lineWidth: 1.5)
+                    RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.accent, lineWidth: 1.5)
                 }
             }
     }

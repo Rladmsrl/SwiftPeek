@@ -44,7 +44,8 @@ struct AdaptivePlaybackContainer<Video: View, Companion: View>: View {
             }
             #endif
         }
-        .background(fullscreen ? Color.black : Color(uiColor: .separator))
+        // 只在内容区内铺分隔色（视频与面板之间的 1pt 缝），不延伸到导航栏和标签栏后面
+        .background(fullscreen ? Color.black : Color(uiColor: .separator), ignoresSafeAreaEdges: [])
         .background {
             if fullscreen { Color.black.ignoresSafeArea() }
         }
@@ -100,6 +101,7 @@ struct PlaybackCompanion<Info: View, Content: View>: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
         }
-        .background(.background)
+        // 浅色为白，深色为次级灰：深色模式下面板与纯黑视频区分得开
+        .background(Color(uiColor: .secondarySystemGroupedBackground))
     }
 }

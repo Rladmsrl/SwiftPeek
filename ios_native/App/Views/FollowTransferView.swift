@@ -41,12 +41,15 @@ struct FollowTransferActions: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Button {
-                includeHistory = false
-                sharing = true
-            } label: {
-                Label("分享关注", systemImage: "square.and.arrow.up")
-            }.disabled(library.follows.isEmpty && library.history.isEmpty)
+            // 没有可分享的内容时不显示，空状态里只留"导入"
+            if !(library.follows.isEmpty && library.history.isEmpty) {
+                Button {
+                    includeHistory = false
+                    sharing = true
+                } label: {
+                    Label("分享关注", systemImage: "square.and.arrow.up")
+                }
+            }
             Button { importing = true } label: { Label("导入关注", systemImage: "square.and.arrow.down") }
                 .disabled(transfer.isReading)
         }

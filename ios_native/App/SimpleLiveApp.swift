@@ -80,7 +80,7 @@ struct RootView: View {
             Tab("分类", systemImage: "square.grid.2x2", value: AppTab.category) {
                 CategoryView(store: categories)
             }
-            Tab("关注", systemImage: "star", value: AppTab.follow) {
+            Tab("关注", systemImage: "heart", value: AppTab.follow) {
                 FollowView()
             }
             Tab("我的", systemImage: "person.crop.circle", value: AppTab.mine) {

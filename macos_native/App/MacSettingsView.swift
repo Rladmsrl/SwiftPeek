@@ -6,7 +6,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
     var id: Self { self }
     var symbol: String {
         switch self {
-        case .general: "slider.horizontal.3"
+        case .general: "gearshape"
         case .playback: "play.rectangle"
         case .danmaku: "text.bubble"
         case .storage: "clock.arrow.circlepath"
@@ -23,48 +23,29 @@ struct MacSettingsView: View {
     @State private var clearHistory = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("让直播更合你意").font(.system(size: 22, weight: .bold))
-                    Text("每一点偏好，都会自动保存。").font(.system(size: 12)).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Image(systemName: "slider.horizontal.3").font(.system(size: 27, weight: .light))
-                    .foregroundStyle(MacDesign.accent)
-            }.padding(28)
-            GlassEffectContainer(spacing: 8) {
-                HStack(spacing: 8) {
-                    ForEach(SettingsPane.allCases) { item in
-                        Button { pane = item } label: {
-                            Label(item.rawValue, systemImage: item.symbol)
-                                .font(.system(size: 12, weight: pane == item ? .semibold : .regular))
-                                .frame(maxWidth: .infinity).padding(.vertical, 11)
-                                // Hit-test the padded label, including the empty space beside the text.
-                                .contentShape(.interaction, Capsule())
-                                .foregroundStyle(pane == item ? MacDesign.accent : .secondary)
-                        }.buttonStyle(.plain)
-                            .glassEffect(.regular.tint(pane == item ? MacDesign.accent.opacity(0.13) : .clear).interactive(), in: .capsule)
-                            .accessibilityAddTraits(pane == item ? [.isSelected] : [])
+        // 原生偏好设置窗口：顶部工具栏标签由系统绘制与切换
+        TabView(selection: $pane) {
+            ForEach(SettingsPane.allCases) { item in
+                Tab(item.rawValue, systemImage: item.symbol, value: item) {
+                    Form {
+                        switch item {
+                        case .general: general
+                        case .playback: playback
+                        case .danmaku: danmaku
+                        case .storage: storage
+                        }
                     }
+                    .formStyle(.grouped)
                 }
-            }.padding(.horizontal, 24).padding(.bottom, 16)
-            Form {
-                switch pane {
-                case .general: general
-                case .playback: playback
-                case .danmaku: danmaku
-                case .storage: storage
-                }
-            }.formStyle(.grouped).scrollContentBackground(.hidden)
-        }.frame(width: 620, height: 600)
-            .background(MacBackdrop())
-            .alert("清理未完成", isPresented: Binding(get: { privacyError != nil }, set: { if !$0 { privacyError = nil } })) {
-                Button("好") { privacyError = nil }
-            } message: { Text(privacyError ?? "") }
-            .confirmationDialog("清空观看历史、录像进度和诊断日志？", isPresented: $clearHistory) {
-                Button("清空", role: .destructive) { clearViewingData() }
             }
+        }
+        .frame(width: 560, height: 500)
+        .alert("清理未完成", isPresented: Binding(get: { privacyError != nil }, set: { if !$0 { privacyError = nil } })) {
+            Button("好") { privacyError = nil }
+        } message: { Text(privacyError ?? "") }
+        .confirmationDialog("清空观看历史、录像进度和诊断日志？", isPresented: $clearHistory) {
+            Button("清空", role: .destructive) { clearViewingData() }
+        }
     }
 
     private var general: some View {
@@ -74,8 +55,6 @@ struct MacSettingsView: View {
                 Picker("窗口主题", selection: $settings.data.appearance) {
                     ForEach(AppearanceMode.allCases) { Text($0.label).tag($0) }
                 }.pickerStyle(.segmented)
-                Text("玻璃导航与控制条随系统外观变化，内容始终清晰可读。")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
             }
             Section("浏览") {
                 Toggle("在直播卡片上显示热度", isOn: $settings.data.showHotBadge)
@@ -175,7 +154,7 @@ struct MacSettingsView: View {
                     .font(.system(size: 12)).foregroundStyle(.secondary)
                 Button("打开日志文件夹", action: MacDiagnostics.reveal).buttonStyle(.glass)
                 Text("默认关闭。开启后记录房间号、时间和播放状态，仅保存在本机，最多约 8 MB。分享前请检查内容。")
-                    .font(.system(size: 10)).foregroundStyle(.tertiary)
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
             }
         }
     }

@@ -34,11 +34,7 @@ struct ReplayListView: View {
         ScrollView {
             if let author = store.author {
                 HStack(spacing: 12) {
-                    AsyncImage(url: URL(string: author.avatar)) { phase in
-                        if case .success(let image) = phase { image.resizable().scaledToFill() }
-                        else { Circle().fill(.quaternary) }
-                    }
-                    .frame(width: 44, height: 44).clipShape(.circle)
+                    AvatarImage(url: author.avatar, name: author.name, size: 44)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(author.name).font(.headline)
                         Text("直播录像 · 弹幕随进度回放").font(.caption).foregroundStyle(.secondary)
@@ -53,7 +49,7 @@ struct ReplayListView: View {
                         NavigationLink(value: ReplayRoute(hashID: first.hashID, roomID: store.author?.roomID ?? store.roomID)) {
                             ReplayShowCard(show: show, fraction: progress.fraction(for: first.hashID))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(PressableStyle())
                         .task { await store.loadMoreIfNeeded(current: show) }
                     }
                 }
@@ -77,25 +73,16 @@ struct ReplayShowCard: View {
     var fraction: Double?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
+        VStack(alignment: .leading, spacing: 0) {
             CoverImage(url: show.videos.first?.cover ?? "")
                 .overlay(alignment: .bottomTrailing) {
                     if !show.totalDuration.isEmpty {
-                        Text(show.totalDuration)
-                            .font(.system(size: 11, weight: .semibold)).monospacedDigit()
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 7).padding(.vertical, 4)
-                            .background(.black.opacity(0.55), in: .capsule)
-                            .padding(8)
+                        CoverTag(title: show.totalDuration).padding(8)
                     }
                 }
                 .overlay(alignment: .topLeading) {
                     if show.partCount > 1 {
-                        Label("\(show.partCount) 段", systemImage: "square.stack")
-                            .font(.system(size: 10, weight: .semibold))
-                            .padding(.horizontal, 7).padding(.vertical, 4)
-                            .glassEffect(.regular, in: .capsule)
-                            .padding(8)
+                        CoverTag(title: "\(show.partCount) 段", symbol: "square.stack").padding(8)
                     }
                 }
                 .overlay(alignment: .bottom) {
@@ -112,13 +99,15 @@ struct ReplayShowCard: View {
                 }
             HStack(alignment: .firstTextBaseline) {
                 Text(show.sessionLabel.isEmpty ? show.title : show.sessionLabel)
-                    .font(.subheadline.weight(.semibold)).lineLimit(1)
+                    .font(.subheadline.weight(.medium)).lineLimit(1)
                 Spacer(minLength: 6)
                 Text([show.relativeDate, show.startClock].filter { !$0.isEmpty }.joined(separator: " "))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
+            .padding(.top, 8)
             if !show.title.isEmpty {
                 Text(show.title).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    .padding(.top, 3)
             }
         }
         .contentShape(.rect)
@@ -440,6 +429,7 @@ struct ReplayView: View {
             scheduleHide()
         } label: {
             Image(systemName: symbol).font(.system(size: size, weight: .semibold)).foregroundStyle(.white)
+                .contentTransition(.symbolEffect(.replace))
                 .frame(width: size * 2.4, height: size * 2.4)
                 .contentShape(.circle)
         }
@@ -455,26 +445,28 @@ struct ReplayView: View {
     // MARK: 信息与侧栏
 
     private var infoSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(detail?.title ?? (session.phase == .loading ? "正在打开录像…" : "录像"))
-                .font(.subheadline.weight(.semibold)).lineLimit(2)
+                .font(.headline).lineLimit(2)
             if let detail {
-                HStack(spacing: 10) {
+                HStack(spacing: 12) {
                     if let date = detail.recordedAt {
                         Label { Text(date, format: .dateTime.month().day().hour().minute()) } icon: { Image(systemName: "calendar") }
                     }
-                    if detail.viewCount > 0 { Label(Theme.formatHot(detail.viewCount), systemImage: "play.circle") }
+                    if detail.viewCount > 0 { Label(Theme.formatHot(detail.viewCount), systemImage: "play") }
                     if detail.danmakuCount > 0 { Label(Theme.formatHot(detail.danmakuCount), systemImage: "text.bubble") }
                 }
-                .font(.caption).foregroundStyle(.secondary).labelStyle(.titleAndIcon)
+                .font(.caption).foregroundStyle(.secondary).labelStyle(CompactLabelStyle())
             }
             if let chapter = session.currentChapter {
                 Label(chapter.title, systemImage: "sparkles")
-                    .font(.caption).foregroundStyle(Theme.accent).lineLimit(1)
+                    .font(.caption.weight(.medium)).foregroundStyle(Theme.accent).lineLimit(1)
+                    .contentTransition(.opacity)
+                    .animation(.easeOut(duration: 0.25), value: chapter.id)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16).padding(.vertical, 12)
+        .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 12)
     }
 
     private var panelPicker: some View {
@@ -541,11 +533,12 @@ struct ReplayView: View {
         return List(session.chapters) { chapter in
             Button { session.seek(to: chapter.start); player.play() } label: {
                 HStack(alignment: .top, spacing: 12) {
+                    // 只有当前章节用品牌色胶囊，其余时间戳安静地对齐成一列
                     Text(ReplayPlayer.format(chapter.start))
                         .font(.caption.weight(.semibold)).monospacedDigit()
                         .padding(.horizontal, 7).padding(.vertical, 3)
-                        .foregroundStyle(chapter.id == current ? .white : Theme.accent)
-                        .background(chapter.id == current ? Theme.accent : Theme.accent.opacity(0.12), in: .capsule)
+                        .foregroundStyle(chapter.id == current ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
+                        .background(chapter.id == current ? Theme.accent : Theme.softFill, in: .capsule)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(chapter.title).font(.subheadline.weight(.semibold)).multilineTextAlignment(.leading)
                         if !chapter.summary.isEmpty {
@@ -561,7 +554,7 @@ struct ReplayView: View {
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
-            .listRowBackground(chapter.id == current ? Theme.accent.opacity(0.06) : nil)
+            .listRowBackground(chapter.id == current ? Theme.accentSoft.opacity(0.6) : nil)
         }
         .listStyle(.plain)
         .overlay {
