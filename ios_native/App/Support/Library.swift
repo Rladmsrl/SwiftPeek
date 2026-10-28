@@ -38,9 +38,12 @@ final class LibraryStore {
     private(set) var follows: [FollowedRoom] = []
     private(set) var history: [HistoryRecord] = []
 
-    /// 关注主播的开播状态，key 为 roomID。刷新前为 nil（未知）。
-    private(set) var liveStatus: [String: Bool] = [:]
+    /// 关注主播的状态（直播 / 轮播 / 未开播），key 为 roomID。刷新前为 nil（未知）。
+    private(set) var roomStatus: [String: LiveRoomStatus] = [:]
     private(set) var isRefreshingFollows = false
+    private var followsRefreshedAt: Date?
+    /// 回到前台时，距上次刷新不足这么久就不再逐个请求关注主播的状态。
+    static let followStatusStaleAfter: TimeInterval = 120
 
     private let directory: URL
     private let followsURL: URL
@@ -68,7 +71,7 @@ final class LibraryStore {
     func toggleFollow(detail: LiveRoomDetail) {
         if let index = follows.firstIndex(where: { $0.roomID == detail.roomID }) {
             follows.remove(at: index)
-            liveStatus.removeValue(forKey: detail.roomID)
+            roomStatus.removeValue(forKey: detail.roomID)
         } else {
             follows.insert(
                 FollowedRoom(
@@ -80,14 +83,14 @@ final class LibraryStore {
                 ),
                 at: 0
             )
-            liveStatus[detail.roomID] = detail.isLiving
+            roomStatus[detail.roomID] = LiveRoomStatus(isLiving: detail.isLiving, isRecord: detail.isRecord)
         }
         save(follows, to: followsURL)
     }
 
     func removeFollows(at offsets: IndexSet) {
         for index in offsets {
-            liveStatus.removeValue(forKey: follows[index].roomID)
+            roomStatus.removeValue(forKey: follows[index].roomID)
         }
         follows.remove(atOffsets: offsets)
         save(follows, to: followsURL)
@@ -95,7 +98,7 @@ final class LibraryStore {
 
     func clearFollows() {
         follows.removeAll()
-        liveStatus.removeAll()
+        roomStatus.removeAll()
         save(follows, to: followsURL)
     }
 
@@ -108,6 +111,7 @@ final class LibraryStore {
         guard !follows.isEmpty, !isRefreshingFollows else { return }
         isRefreshingFollows = true
         defer { isRefreshingFollows = false }
+        followsRefreshedAt = Date()
 
         let site = Sites.douyu
         let ids = follows.map(\.roomID)
@@ -132,10 +136,10 @@ final class LibraryStore {
         }
 
         // 最后一次 await 之后才取当前列表，刷新期间增删的关注不会被覆盖
-        var status = liveStatus
+        var status = roomStatus
         var updated = follows
         for brief in briefs {
-            status[brief.roomID] = brief.isLiving
+            status[brief.roomID] = brief.status
             guard let position = updated.firstIndex(where: { $0.roomID == brief.roomID })
             else { continue }
             if !brief.title.isEmpty { updated[position].title = brief.title }
@@ -143,16 +147,44 @@ final class LibraryStore {
             if !brief.userName.isEmpty { updated[position].userName = brief.userName }
         }
 
-        // 开播的排前面，其次按关注时间倒序
+        // 直播排前面，其次轮播，再按关注时间倒序
         updated.sort { lhs, rhs in
-            let l = status[lhs.roomID] ?? false
-            let r = status[rhs.roomID] ?? false
-            if l != r { return l }
+            let l = Self.followRank(status[lhs.roomID])
+            let r = Self.followRank(status[rhs.roomID])
+            if l != r { return l < r }
             return lhs.addedAt > rhs.addedAt
         }
-        liveStatus = status
+        roomStatus = status
         follows = updated
         save(follows, to: followsURL)
+    }
+
+    func refreshFollowStatusIfStale(now: Date = Date()) async {
+        if let followsRefreshedAt, now.timeIntervalSince(followsRefreshedAt) < Self.followStatusStaleAfter { return }
+        await refreshFollowStatus()
+    }
+
+    func followStatus(_ roomID: String) -> LiveRoomStatus? { roomStatus[roomID] }
+
+    /// 关注列表分组：直播、轮播、其余（未开播或尚未刷新）。
+    func followGroups() -> (live: [FollowedRoom], looping: [FollowedRoom], rest: [FollowedRoom]) {
+        var groups: (live: [FollowedRoom], looping: [FollowedRoom], rest: [FollowedRoom]) = ([], [], [])
+        for item in follows {
+            switch roomStatus[item.roomID] {
+            case .live: groups.live.append(item)
+            case .looping: groups.looping.append(item)
+            default: groups.rest.append(item)
+            }
+        }
+        return groups
+    }
+
+    private static func followRank(_ status: LiveRoomStatus?) -> Int {
+        switch status {
+        case .live: 0
+        case .looping: 1
+        default: 2
+        }
     }
 
     // MARK: 跨设备关注分享

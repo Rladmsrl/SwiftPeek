@@ -135,11 +135,14 @@ struct MacLibraryView: View {
             MacRoomGrid(rooms: recommend.rooms, phase: recommend.phase, open: openRoom,
                         retry: { Task { await recommend.refresh() } },
                         loadMore: { await recommend.loadMoreIfNeeded(currentItem: $0) })
-                .task { if recommend.rooms.isEmpty { await recommend.refresh() } }
+                .task { if recommend.rooms.isEmpty { await recommend.refresh() } else { await recommend.refreshIfStale() } }
+                .refreshesWhenReturning { await recommend.refreshIfStale() }
         case .categories:
             categoryContent
         case .follows:
-            followContent.task { await library.refreshFollowStatus() }
+            followContent
+                .task { await library.refreshFollowStatus() }
+                .refreshesWhenReturning { await library.refreshFollowStatusIfStale() }
         case .history:
             historyContent
         case .search:
@@ -188,8 +191,10 @@ struct MacLibraryView: View {
     }
 
     private var followContent: some View {
-        let liveFollows = library.follows.filter { library.liveStatus[$0.roomID] == true }
-        let otherFollows = library.follows.filter { library.liveStatus[$0.roomID] != true }
+        let groups = library.followGroups()
+        let liveFollows = groups.live
+        let loopingFollows = groups.looping
+        let otherFollows = groups.rest
         return VStack(alignment: .leading, spacing: 28) {
             if library.follows.isEmpty {
                 MacEmptyState(symbol: "heart", title: "还没有关注的主播",
@@ -199,7 +204,13 @@ struct MacLibraryView: View {
                 if !liveFollows.isEmpty {
                     followGroup("正在直播 · \(liveFollows.count)", liveFollows, pulses: true)
                 }
-                followGroup(liveFollows.isEmpty ? (library.isRefreshingFollows ? "正在更新开播状态…" : nil) : "未开播", otherFollows)
+                if !loopingFollows.isEmpty {
+                    followGroup("轮播中 · \(loopingFollows.count)", loopingFollows)
+                }
+                if !otherFollows.isEmpty {
+                    let grouped = !liveFollows.isEmpty || !loopingFollows.isEmpty
+                    followGroup(grouped ? "未开播" : (library.isRefreshingFollows ? "正在更新开播状态…" : nil), otherFollows)
+                }
                 HStack(spacing: 12) {
                     Text("通过隔空投送，把关注合并到另一台设备。")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
@@ -209,7 +220,7 @@ struct MacLibraryView: View {
                 .padding(.top, 8)
             }
         }
-        .animation(reduceMotion ? nil : Theme.glide, value: liveFollows.map(\.roomID))
+        .animation(reduceMotion ? nil : Theme.glide, value: liveFollows.map(\.roomID) + loopingFollows.map(\.roomID))
     }
 
     private func followGroup(_ title: String?, _ items: [FollowedRoom], pulses: Bool = false) -> some View {
@@ -223,7 +234,7 @@ struct MacLibraryView: View {
             }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 260, maximum: 420), spacing: 8)], spacing: 4) {
                 ForEach(items) { item in
-                    MacFollowTile(item: item, isLive: library.liveStatus[item.roomID]) { openRoom(item.roomID) }
+                    MacFollowTile(item: item, status: library.followStatus(item.roomID)) { openRoom(item.roomID) }
                         .contextMenu {
                             Button("查看录像") { openReplays(item.roomID) }
                             Divider()
@@ -344,5 +355,6 @@ private struct MacCategoryRooms: View {
             }
         }
         .task { await store.refresh() }
+        .refreshesWhenReturning { await store.refreshIfStale() }
     }
 }

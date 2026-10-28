@@ -8,6 +8,70 @@ enum Sites {
     static let douyu = DouyuSite()
 }
 
+// MARK: - 房间状态确认
+
+/// 列表里的轮播类型房间（`.loopCandidate`）主播可能正在真直播，只有房间自身的
+/// 状态接口说得准。卡片出现时逐个确认：限制并发、短时缓存，确认结果对所有列表共享。
+@MainActor
+@Observable
+final class RoomStatusConfirmations {
+    static let shared = RoomStatusConfirmations()
+    /// 同一房间在这段时间内不重复请求
+    static let lifetime: TimeInterval = 120
+    static let concurrency = 4
+
+    private struct Confirmation {
+        let status: LiveRoomStatus
+        let confirmedAt: Date
+    }
+
+    private var confirmations: [String: Confirmation] = [:]
+    @ObservationIgnored private var inFlight: Set<String> = []
+    @ObservationIgnored private var running = 0
+    @ObservationIgnored private var waiters: [CheckedContinuation<Void, Never>] = []
+    @ObservationIgnored private let lookup: @MainActor (String) async throws -> LiveRoomStatus
+    @ObservationIgnored private let now: () -> Date
+
+    init(lookup: (@MainActor (String) async throws -> LiveRoomStatus)? = nil, now: @escaping () -> Date = Date.init) {
+        self.lookup = lookup ?? { try await Sites.douyu.roomBrief(roomID: $0).status }
+        self.now = now
+    }
+
+    /// 待确认的房间在确认前不显示状态；确认过期后仍沿用上次结果，直到重新确认完成。
+    func status(of room: LiveRoomItem) -> LiveRoomStatus {
+        guard room.status == .loopCandidate else { return room.status }
+        return confirmations[room.roomID]?.status ?? .loopCandidate
+    }
+
+    /// 由卡片的 `.task` 调用。卡片滑出屏幕时任务被取消，排队中的请求随之放弃。
+    func confirmIfNeeded(_ room: LiveRoomItem) async {
+        guard room.status == .loopCandidate else { return }
+        let id = room.roomID
+        if let existing = confirmations[id], now().timeIntervalSince(existing.confirmedAt) < Self.lifetime { return }
+        guard inFlight.insert(id).inserted else { return }
+        defer { inFlight.remove(id) }
+        await acquire()
+        defer { release() }
+        guard !Task.isCancelled, let status = try? await lookup(id), !Task.isCancelled else { return }
+        let stamp = now()
+        confirmations = confirmations.filter { stamp.timeIntervalSince($0.value.confirmedAt) < Self.lifetime * 5 }
+        confirmations[id] = Confirmation(status: status, confirmedAt: stamp)
+    }
+
+    private func acquire() async {
+        if running < Self.concurrency {
+            running += 1
+            return
+        }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    /// 名额直接转交给下一个等待者，`running` 不变。
+    private func release() {
+        if waiters.isEmpty { running -= 1 } else { waiters.removeFirst().resume() }
+    }
+}
+
 // MARK: - 推荐
 
 @MainActor
@@ -22,7 +86,17 @@ final class RecommendStore {
     /// 下拉刷新会让进行中的 loadMore 作废，避免旧页数据接到新列表上。
     private var loadGeneration = 0
 
-    func refresh() async {
+    /// 列表只在这次加载时准确。App 长时间开着，回到前台时超过这个时长就重新加载。
+    static let staleAfter: TimeInterval = 300
+    private(set) var loadedAt: Date?
+
+    func refreshIfStale(now: Date = Date()) async {
+        guard let loadedAt, phase != .loading, now.timeIntervalSince(loadedAt) >= Self.staleAfter else { return }
+        await refresh(quietly: true)
+    }
+
+    /// `quietly`: an automatic reload that fails keeps the rooms already on screen.
+    func refresh(quietly: Bool = false) async {
         loadGeneration += 1
         let generation = loadGeneration
         page = 1
@@ -33,10 +107,11 @@ final class RecommendStore {
             guard generation == loadGeneration else { return }
             rooms = result.items
             hasMore = result.hasMore
+            loadedAt = Date()
             phase = .loaded
         } catch {
             guard generation == loadGeneration else { return }
-            phase = .failed(error.localizedDescription)
+            phase = quietly && !rooms.isEmpty ? .loaded : .failed(error.localizedDescription)
         }
     }
 
@@ -100,7 +175,17 @@ final class CategoryRoomsStore {
         self.category = category
     }
 
-    func refresh() async {
+    /// 列表只在这次加载时准确。App 长时间开着，回到前台时超过这个时长就重新加载。
+    static let staleAfter: TimeInterval = 300
+    private(set) var loadedAt: Date?
+
+    func refreshIfStale(now: Date = Date()) async {
+        guard let loadedAt, phase != .loading, now.timeIntervalSince(loadedAt) >= Self.staleAfter else { return }
+        await refresh(quietly: true)
+    }
+
+    /// `quietly`: an automatic reload that fails keeps the rooms already on screen.
+    func refresh(quietly: Bool = false) async {
         loadGeneration += 1
         let generation = loadGeneration
         page = 1
@@ -111,10 +196,11 @@ final class CategoryRoomsStore {
             guard generation == loadGeneration else { return }
             rooms = result.items
             hasMore = result.hasMore
+            loadedAt = Date()
             phase = .loaded
         } catch {
             guard generation == loadGeneration else { return }
-            phase = .failed(error.localizedDescription)
+            phase = quietly && !rooms.isEmpty ? .loaded : .failed(error.localizedDescription)
         }
     }
 

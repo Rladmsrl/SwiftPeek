@@ -33,29 +33,34 @@ struct MacCategoryButton: View {
     }
 }
 
-/// 关注的主播：头像、名字和当前标题一行排开，正在直播的带橙色细环和橙点。
+/// 关注的主播：头像、名字和当前标题一行排开，正在直播的带橙色细环和橙点，轮播的带循环图标。
 struct MacFollowTile: View {
     let item: FollowedRoom
-    let isLive: Bool?
+    /// nil 表示尚未刷新
+    let status: LiveRoomStatus?
     let open: () -> Void
 
     var body: some View {
         Button(action: open) {
             HStack(spacing: 12) {
-                AvatarImage(url: item.avatar, name: item.userName, size: 40, live: isLive == true)
+                AvatarImage(url: item.avatar, name: item.userName, size: 40, live: status == .live)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(item.userName).font(.system(size: 13, weight: .semibold)).lineLimit(1)
                     Text(item.title).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer(minLength: 6)
-                if isLive == true { LiveDot() }
+                if status == .live {
+                    LiveDot()
+                } else if status == .looping {
+                    Image(systemName: "repeat").font(.system(size: 11)).foregroundStyle(.secondary)
+                }
             }
             .padding(10)
             .macHoverFill(radius: 12)
         }
         .buttonStyle(PressableStyle())
         .help("进入 \(item.userName) 的直播间")
-        .accessibilityValue(isLive == true ? "直播中" : isLive == false ? "未开播" : "")
+        .accessibilityValue(status?.label ?? "")
     }
 }
 
