@@ -11,6 +11,7 @@ protocol MobilePlaybackEngine: AnyObject {
     var isMuted: Bool { get set }
     var onPrepareStream: (@MainActor (Bool) async throws -> PreparedPlaybackStream)? { get set }
     var onCommitStream: (@MainActor (PreparedPlaybackStream) -> Void)? { get set }
+    var onSustainedUnderrun: (@MainActor () -> Void)? { get set }
     var diagnosticFields: [String: String] { get }
     func start(url: String, headers: [String: String]?)
     func stop()
@@ -92,6 +93,7 @@ final class MobileRoomPlaybackSession<Player: MobilePlaybackEngine> {
             // No URL observation starts the player here: its buffered handoff already did the work.
             self.store.commitReplacementStream(prepared)
         }
+        player.onSustainedUnderrun = { [weak self] in self?.lowerQualityForWeakNetwork() }
         loadRoom()
         LiveDiagnostics.record("room.open", roomID: roomID, fields: player.diagnosticFields)
         telemetry = Task { [weak self] in
@@ -208,6 +210,26 @@ final class MobileRoomPlaybackSession<Player: MobilePlaybackEngine> {
             }
         }
     }
+    /// Weak-network downgrade applies to this room only; the default preference is untouched.
+    private func lowerQualityForWeakNetwork() {
+        guard opened, wantsPlayback, !isWorking, settings?.data.autoLowerQuality == true,
+              let index = store.lowerQualityIndex else { return }
+        let name = store.qualities[index].quality
+        LiveDiagnostics.record("room.autoLowerQuality", roomID: roomID, fields: ["quality": name])
+        let token = beginOperation()
+        let store = self.store
+        operation = Task { [weak self] in
+            let changed = await store.selectQuality(index, remember: false)
+            guard let self, self.current(token) else { return }
+            self.isWorking = false
+            guard changed else { return }
+            store.danmakuNotice = "网络较差，已自动切换到\(name)"
+            if self.mayPlay, let url = store.currentStreamURL {
+                self.player.start(url: url, headers: store.playURL?.headers)
+            }
+        }
+    }
+
     func switchLine() {
         guard opened, !isWorking else { return }
         let restart = player.isActive
@@ -271,6 +293,7 @@ final class MobileRoomPlaybackSession<Player: MobilePlaybackEngine> {
         cancelPlayback()
         player.onPrepareStream = nil
         player.onCommitStream = nil
+        player.onSustainedUnderrun = nil
         let store = self.store
         Task { await store.stop() }
         LiveDiagnostics.record("room.close", roomID: roomID, fields: player.diagnosticFields)

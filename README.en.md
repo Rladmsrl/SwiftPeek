@@ -116,7 +116,7 @@ See [capture notes](docs/screenshots/README.md).
 
 - **Browse streams:** recommendations, categories, room and creator search, and opening rooms by ID or link.
 - **Focused playback:** HTTP-FLV playback with H.264 / AAC, quality and CDN selection, volume, mute, and fullscreen.
-- **Buffering and background handoff:** approximately four seconds of in-memory media buffering, with fresh credentials and a replacement connection prepared before handoff.
+- **Buffering and background handoff:** adaptive two-to-six-second in-memory buffering that refills before resuming after a stall, with fresh credentials and a replacement connection prepared before handoff. Playback waits out network loss, reconnects as soon as connectivity returns or the interface changes, and can step quality down one level on a weak network.
 - **Danmaku and live chat:** scrolling chat overlays and a chat list, with font selection, size, speed, opacity, display area, and keyword filters; optional chat overlays in Picture in Picture.
 - **Replays:** browse a creator's past broadcasts by session and watch them with chat replayed on its original timeline; the scrubber shows chat density and AI chapters, and playback resumes where you left off. [Details (Chinese)](docs/replay.md)
 - **Follows and history:** local storage, plus follow-list files (watch history is included only when explicitly selected) that can be shared through AirDrop and manually merged between Mac and iPhone.

@@ -148,6 +148,7 @@ public struct DouyuSite: LiveSite {
         async let roomJSTask = fetchSignScript(roomID)
         let showTime = try? await showTimeTask
         let roomJS = try await roomJSTask
+        await Self.signScripts.store(roomJS, for: roomID)
 
         // 签名要执行一整份 CryptoJS 和房间下发的混淆脚本，不能占着主线程。
         let signedAt = Date()
@@ -268,14 +269,19 @@ public struct DouyuSite: LiveSite {
         guard let payload = detail.payload as? DouyuRoomPayload else {
             throw LiveCoreError("斗鱼房间载荷缺失，无法获取清晰度")
         }
-        let signArgs = try await freshSignArgs(payload)
-        let body = signArgs
-            + "&cdn=&rate=-1&ver=\(Self.clientVersion)&iar=1&ive=1&hevc=0&fa=0"
-        let result = try await http.postForm(
-            "https://www.douyu.com/lapi/live/getH5Play/\(detail.roomID)",
-            body: body,
-            headers: roomHeaders(detail.roomID)
-        )
+        var signing = try await freshSignArgs(payload)
+        func request(_ signArgs: String) async throws -> JSON {
+            try await http.postForm(
+                "https://www.douyu.com/lapi/live/getH5Play/\(detail.roomID)",
+                body: signArgs + "&cdn=&rate=-1&ver=\(Self.clientVersion)&iar=1&ive=1&hevc=0&fa=0",
+                headers: roomHeaders(detail.roomID)
+            )
+        }
+        var result = try await request(signing.args)
+        if result["error"].intValue != 0, signing.cachedScript {
+            signing = try await freshSignArgs(payload, refreshScript: true)
+            result = try await request(signing.args)
+        }
         if result["error"].intValue != 0 {
             throw LiveCoreError(result["msg"].string ?? "斗鱼取流失败")
         }
@@ -300,54 +306,36 @@ public struct DouyuSite: LiveSite {
     }
 
     public func playURL(detail: LiveRoomDetail, quality: LivePlayQuality) async throws -> LivePlayURL {
+        try await playURL(detail: detail, quality: quality, lineIDs: [])
+    }
+
+    public func playURL(detail: LiveRoomDetail, quality: LivePlayQuality, lineIDs: [String]) async throws -> LivePlayURL {
         guard let roomPayload = detail.payload as? DouyuRoomPayload,
               let qualityPayload = quality.payload as? DouyuQualityPayload
         else {
             throw LiveCoreError("斗鱼取流载荷缺失")
         }
+        let requested = lineIDs.filter(qualityPayload.cdns.contains)
+        let cdns = requested.isEmpty ? qualityPayload.cdns : requested
 
-        let signArgs = try await freshSignArgs(roomPayload)
-        // 各 CDN 互不依赖。串行会把首帧推迟成「线路数 × 一次往返」。
-        let indexed = await withTaskGroup(of: (Int, String, String?).self) { group in
-            for (index, cdn) in qualityPayload.cdns.enumerated() {
-                group.addTask {
-                    do {
-                        let url = try await self.fetchStreamURL(
-                            roomID: detail.roomID,
-                            signArgs: signArgs,
-                            rate: qualityPayload.rate,
-                            cdn: cdn
-                        )
-                        return (index, url, nil)
-                    } catch {
-                        return (index, "", error.localizedDescription)
-                    }
-                }
-            }
-            var collected: [(Int, String, String?)] = []
-            for await item in group {
-                collected.append(item)
-            }
-            return collected.sorted { $0.0 < $1.0 }
+        var signing = try await freshSignArgs(roomPayload)
+        var lines = await resolveLines(cdns, roomID: detail.roomID, signArgs: signing.args, rate: qualityPayload.rate)
+        // 缓存的签名脚本可能已被斗鱼轮换，全部失败时重新拉一次脚本。
+        if lines.urls.isEmpty, signing.cachedScript {
+            signing = try await freshSignArgs(roomPayload, refreshScript: true)
+            lines = await resolveLines(cdns, roomID: detail.roomID, signArgs: signing.args, rate: qualityPayload.rate)
         }
-
-        var urls: [String] = []
-        var lineIDs: [String] = []
-        var lastError: String?
-        for (index, url, failure) in indexed {
-            if !url.isEmpty {
-                urls.append(url)
-                lineIDs.append(qualityPayload.cdns[index])
-            } else if let failure {
-                lastError = failure
-            }
+        // 指定线路本身坏了时，退回全部线路，让调用方换到能用的那条。
+        if lines.urls.isEmpty, cdns.count < qualityPayload.cdns.count {
+            signing = try await freshSignArgs(roomPayload)
+            lines = await resolveLines(qualityPayload.cdns, roomID: detail.roomID, signArgs: signing.args, rate: qualityPayload.rate)
         }
-        guard !urls.isEmpty else {
-            throw LiveCoreError("未取到可用线路：\(lastError ?? "全部 CDN 返回空")")
+        guard !lines.urls.isEmpty else {
+            throw LiveCoreError("未取到可用线路：\(lines.lastError ?? "全部 CDN 返回空")")
         }
         return LivePlayURL(
-            urls: urls,
-            lineIDs: lineIDs,
+            urls: lines.urls,
+            lineIDs: lines.lineIDs,
             headers: [
                 "User-Agent": HTTPClient.desktopUserAgent,
                 "Referer": "https://www.douyu.com/\(detail.roomID)",
@@ -355,18 +343,96 @@ public struct DouyuSite: LiveSite {
         )
     }
 
-    /// 进房瞬间的签名直接复用；超过窗口就重新拉脚本并在后台线程执行。
-    private func freshSignArgs(_ payload: DouyuRoomPayload) async throws -> String {
-        LiveDiagnostics.record("douyu.signature", roomID: payload.signRoomID, fields: [
-            "ageSeconds": String(Int(Date().timeIntervalSince(payload.signedAt))),
-            "renew": String(Date().timeIntervalSince(payload.signedAt) >= Self.signReuseWindow),
+    private func resolveLines(_ cdns: [String], roomID: String, signArgs: String, rate: Int) async
+        -> (urls: [String], lineIDs: [String], lastError: String?) {
+        let results = await Self.collectLines(count: cdns.count, grace: Self.lineGrace) { index in
+            try await self.fetchStreamURL(roomID: roomID, signArgs: signArgs, rate: rate, cdn: cdns[index])
+        }
+        var urls: [String] = []
+        var lineIDs: [String] = []
+        var lastError: String?
+        for result in results {
+            switch result.outcome {
+            case .success(let url) where !url.isEmpty:
+                urls.append(url)
+                lineIDs.append(cdns[result.index])
+            case .success:
+                break
+            case .failure(let error):
+                lastError = error.localizedDescription
+            }
+        }
+        LiveDiagnostics.record("douyu.lines", roomID: roomID, fields: [
+            "requested": String(cdns.count), "resolved": String(urls.count),
         ])
-        if Date().timeIntervalSince(payload.signedAt) < Self.signReuseWindow {
-            return payload.signArgs
+        return (urls, lineIDs, lastError)
+    }
+
+    /// 首条线路返回后再等其余线路这么久。弱网下某个 CDN 的接口可能拖到请求超时，
+    /// 不能让首帧和每次恢复都跟着等最慢的那条。
+    static let lineGrace: Duration = .milliseconds(1200)
+
+    struct LineResult: Sendable {
+        let index: Int
+        let outcome: Result<String, Error>
+    }
+
+    /// 并行解析各线路，按线路顺序返回。拿到第一条可用地址后只再等 `grace`，
+    /// 超时未返回的线路被取消并从结果中省略。
+    static func collectLines(
+        count: Int,
+        grace: Duration,
+        resolve: @escaping @Sendable (Int) async throws -> String
+    ) async -> [LineResult] {
+        guard count > 0 else { return [] }
+        return await withTaskGroup(of: LineResult?.self) { group in
+            for index in 0..<count {
+                group.addTask {
+                    do { return LineResult(index: index, outcome: .success(try await resolve(index))) }
+                    catch { return LineResult(index: index, outcome: .failure(error)) }
+                }
+            }
+            var collected: [LineResult] = []
+            var graceStarted = false
+            while let next = await group.next() {
+                // nil 是宽限期到点的哨兵
+                guard let result = next else { break }
+                collected.append(result)
+                if collected.count == count { break }
+                if !graceStarted, case .success(let url) = result.outcome, !url.isEmpty {
+                    graceStarted = true
+                    group.addTask {
+                        try? await Task.sleep(for: grace)
+                        return nil
+                    }
+                }
+            }
+            group.cancelAll()
+            return collected.sorted { $0.index < $1.index }
+        }
+    }
+
+    /// 进房瞬间的签名直接复用；超过窗口就用缓存的签名脚本重新签名，
+    /// 在后台线程执行。脚本按房间缓存，省掉每次换流前的一次往返。
+    private func freshSignArgs(_ payload: DouyuRoomPayload, refreshScript: Bool = false) async throws
+        -> (args: String, cachedScript: Bool) {
+        let age = Date().timeIntervalSince(payload.signedAt)
+        LiveDiagnostics.record("douyu.signature", roomID: payload.signRoomID, fields: [
+            "ageSeconds": String(Int(age)),
+            "renew": String(age >= Self.signReuseWindow || refreshScript),
+        ])
+        if !refreshScript, age < Self.signReuseWindow {
+            return (payload.signArgs, false)
+        }
+        if !refreshScript, let cached = await Self.signScripts.script(for: payload.signRoomID) {
+            return (try await Self.computeSign(roomJS: cached, roomID: payload.signRoomID), true)
         }
         let roomJS = try await fetchSignScript(payload.signRoomID)
-        return try await Self.computeSign(roomJS: roomJS, roomID: payload.signRoomID)
+        await Self.signScripts.store(roomJS, for: payload.signRoomID)
+        return (try await Self.computeSign(roomJS: roomJS, roomID: payload.signRoomID), false)
     }
+
+    private static let signScripts = DouyuSignScriptCache()
 
     /// JavaScriptCore 会占住调用线程。从主 actor 进来时必须挪走，否则进房卡界面。
     private static func computeSign(roomJS: String, roomID: String, timestamp: Int? = nil) async throws -> String {
@@ -476,5 +542,22 @@ public struct DouyuSite: LiveSite {
     static func randomHexString(length: Int) -> String {
         let digits = "0123456789abcdef"
         return String((0..<length).map { _ in digits.randomElement()! })
+    }
+}
+
+/// 签名脚本只决定签名算法，时间戳每次重新计算。缓存有时效，
+/// 且取流全部失败时会强制刷新，脚本被轮换也只多一次往返。
+actor DouyuSignScriptCache {
+    static let lifetime: TimeInterval = 600
+    private var entries: [String: (script: String, storedAt: Date)] = [:]
+
+    func script(for roomID: String, now: Date = Date()) -> String? {
+        guard let entry = entries[roomID], now.timeIntervalSince(entry.storedAt) < Self.lifetime else { return nil }
+        return entry.script
+    }
+
+    func store(_ script: String, for roomID: String, now: Date = Date()) {
+        entries = entries.filter { now.timeIntervalSince($0.value.storedAt) < Self.lifetime }
+        entries[roomID] = (script, now)
     }
 }

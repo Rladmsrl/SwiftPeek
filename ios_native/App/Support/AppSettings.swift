@@ -95,6 +95,8 @@ struct SettingsData: Codable, Equatable {
     var showResolutionBadge: Bool = true
     /// 播放器音量，退出直播间时记住
     var playerVolume: Double = 1.0
+    /// 网络跟不上当前清晰度、反复卡顿时自动降一档（不改默认清晰度偏好）
+    var autoLowerQuality: Bool = true
 
     // 列表
     var showHotBadge: Bool = true
@@ -133,6 +135,7 @@ struct SettingsData: Codable, Equatable {
         floatingWindowOnTop = v(.floatingWindowOnTop, base.floatingWindowOnTop)
         showResolutionBadge = v(.showResolutionBadge, base.showResolutionBadge)
         playerVolume = v(.playerVolume, base.playerVolume)
+        autoLowerQuality = v(.autoLowerQuality, base.autoLowerQuality)
         showHotBadge = v(.showHotBadge, base.showHotBadge)
         danmakuVisibleByDefault = v(.danmakuVisibleByDefault, base.danmakuVisibleByDefault)
         multiWatchDanmakuMode = v(.multiWatchDanmakuMode, base.multiWatchDanmakuMode)

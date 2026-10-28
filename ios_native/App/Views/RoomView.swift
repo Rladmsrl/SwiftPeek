@@ -344,6 +344,16 @@ struct RoomView: View {
             .padding(14)
             .glassEffect(.regular, in: .rect(cornerRadius: 14))
 
+        case .waitingForNetwork:
+            VStack(spacing: 8) {
+                Image(systemName: "wifi.slash")
+                Text("网络已断开，恢复后自动续播")
+                    .font(.caption)
+            }
+            .foregroundStyle(.white)
+            .padding(14)
+            .glassEffect(.regular, in: .rect(cornerRadius: 14))
+
         case .failed(let message):
             VStack(spacing: 10) {
                 Image(systemName: "exclamationmark.triangle")

@@ -129,5 +129,86 @@ struct BufferedPlaybackCheck {
             precondition(starved > end)
         }
         print("PASS: replacement timestamps follow old queued media without resetting the clock")
+
+        func cut(_ last: UInt32?, base: UInt32? = 3_600_000, start: UInt32?, end: UInt32?) -> UInt32? {
+            LiveHandoffTimeline.spliceCut(lastVideo: last, previousBase: base, replacementStart: start, replacementEnd: end)
+        }
+        precondition(cut(3_660_000, start: 3_657_500, end: 3_662_000) == 3_660_000)
+        precondition(cut(3_660_000, start: 3_660_200, end: 3_662_000) == 3_660_000)
+        precondition(cut(3_660_000, start: 3_661_000, end: 3_665_000) == nil, "A gap was spliced into a freeze")
+        precondition(cut(3_660_000, start: 0, end: 4_000) == nil)
+        precondition(cut(3_660_000, start: 3_657_500, end: 3_660_200) == nil, "Splice would wait for the live edge")
+        precondition(cut(5_000, base: 0, start: 0, end: 8_000) == nil, "Rebased timestamps were treated as one timeline")
+        precondition(cut(nil, start: 0, end: 1) == nil)
+        let keyed = LiveTagBuffer()
+        try await keyed.append(tag(57_500, header: true))
+        try await keyed.append(tag(57_500, key: true))
+        try await keyed.append(tag(58_000))
+        let keyedSnapshot = await keyed.snapshot()
+        precondition(keyedSnapshot.firstTimestamp == 57_500 && keyedSnapshot.lastTimestamp == 58_000)
+        print("PASS: same-origin overlap splices on the old timeline; distant timestamps fall back to appending")
+
+        var renewal = LiveHandoffPolicy()
+        precondition(!renewal.begin(now: 250, sourceAge: 250, ended: false, stalled: false, healthy: false))
+        precondition(renewal.begin(now: 276, sourceAge: 276, ended: false, stalled: false, healthy: false))
+        var offline = LiveHandoffPolicy()
+        for _ in 0..<LiveHandoffPolicy.maximumAttempts {
+            precondition(offline.begin(now: 1, sourceAge: 1, ended: true, stalled: false))
+            offline.forgive()
+        }
+        precondition(!offline.exhausted)
+        for _ in 0..<LiveHandoffPolicy.maximumAttempts { _ = offline.begin(now: 1, sourceAge: 1, ended: true, stalled: false) }
+        precondition(offline.exhausted)
+        offline.networkChanged()
+        precondition(offline.begin(now: 1, sourceAge: 1, ended: true, stalled: false))
+        for _ in 0..<100 {
+            let age = LiveHandoffPolicy.jitteredRenewalAge()
+            precondition(abs(age - LiveHandoffPolicy.renewalAge) <= LiveHandoffPolicy.renewalJitter && age < LiveHandoffPolicy.latestRenewalAge)
+        }
+        print("PASS: low buffer postpones renewal until the deadline; offline failures keep the budget; renewals are staggered")
+
+        precondition(!LiveJitterPolicy.shouldStart(seconds: 1.5, ready: false, count: 10, ended: false, waited: 1))
+        precondition(LiveJitterPolicy.shouldStart(seconds: 2, ready: false, count: 10, ended: false, waited: 3))
+        precondition(!LiveJitterPolicy.shouldStart(seconds: 0.5, ready: false, count: 10, ended: false, waited: 5))
+        precondition(LiveJitterPolicy.shouldStart(seconds: 1, ready: false, count: 10, ended: false, waited: 6))
+        precondition(LiveJitterPolicy.shouldStart(seconds: 0, ready: false, count: 1, ended: false, waited: 10))
+        precondition(!LiveJitterPolicy.shouldStart(seconds: 0, ready: false, count: 0, ended: true, waited: 30))
+        precondition(LiveJitterPolicy.shouldStart(seconds: 4, ready: true, count: 10, ended: false, waited: 0))
+        print("PASS: first frame waits for 4 seconds on a fast network but no longer than 3-10 seconds on a slow one")
+
+        var jitter = LiveJitterPolicy()
+        precondition(jitter.stalled(at: 0) == 2 && jitter.stalled(at: 5) == 3 && jitter.stalled(at: 10) == 4.5)
+        precondition(jitter.stalled(at: 15) == 6 && jitter.stalled(at: 20) == 6)
+        precondition(LiveJitterPolicy.resumeLevels.max()! < LiveTagBuffer.maximumSeconds)
+        precondition(jitter.stalled(at: 20 + 2 * LiveJitterPolicy.decayInterval) == 3, "Stable playback did not shrink the reserve")
+        precondition(!LiveJitterPolicy.shouldResume(seconds: 0.2, target: 2, ready: false, count: 3, ended: false, waited: 1),
+                     "Resumed with no reserve after a stall")
+        precondition(LiveJitterPolicy.shouldResume(seconds: 2, target: 2, ready: false, count: 30, ended: false, waited: 1))
+        precondition(LiveJitterPolicy.shouldResume(seconds: 0.2, target: 2, ready: false, count: 3, ended: true, waited: 1))
+        precondition(LiveJitterPolicy.shouldResume(seconds: 0.5, target: 4.5, ready: false, count: 3, ended: false, waited: 10))
+        precondition(!LiveJitterPolicy.shouldResume(seconds: 0, target: 2, ready: false, count: 0, ended: true, waited: 30))
+        precondition(LiveJitterPolicy.refillStart(afterHandoff: 0, now: 30) == 30 - LiveJitterPolicy.rebufferTimeout + LiveJitterPolicy.handoffRefillGrace)
+        precondition(LiveJitterPolicy.refillStart(afterHandoff: 29, now: 30) == 29)
+        var underruns = LiveJitterPolicy()
+        precondition(!underruns.recordUnderrun(at: 0) && !underruns.recordUnderrun(at: 100) && !underruns.recordUnderrun(at: 150))
+        precondition(underruns.recordUnderrun(at: 170), "Three stalls within the window did not ask for a lower quality")
+        precondition(!underruns.recordUnderrun(at: 171))
+        print("PASS: stalls refill a growing reserve before resuming, decay when stable, and repeated ones ask to downgrade")
+
+        var path = NetworkPathState()
+        precondition(!path.update(satisfied: true, interfaces: ["en0"]), "Initial path counted as a change")
+        precondition(!path.update(satisfied: true, interfaces: ["en0"]))
+        precondition(path.update(satisfied: false, interfaces: []) && !path.snapshot.satisfied)
+        precondition(path.update(satisfied: true, interfaces: ["en0"]) && path.snapshot.generation == 2)
+        precondition(path.update(satisfied: true, interfaces: ["pdp_ip0"]) && path.snapshot.generation == 3)
+        precondition(path.update(satisfied: false, interfaces: []) && !path.update(satisfied: false, interfaces: []))
+        print("PASS: path generation advances on loss, recovery and interface change only")
+
+        let silent = BufferedLiveSource(request: URLRequest(url: URL(string: "https://fixture.invalid/waiting")!),
+                                        diagnosticID: "silent", configuration: config())
+        try await Task.sleep(for: .milliseconds(50))
+        precondition(silent.lastReceivedAt == nil, "A socket without bytes reported receipt")
+        silent.cancel()
+        print("PASS: a connected socket that delivers no bytes is distinguishable from a receiving one")
     }
 }

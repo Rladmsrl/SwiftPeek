@@ -104,6 +104,12 @@ final class PiPLiveFrameSource: @unchecked Sendable {
         processingLock.unlock()
     }
 
+    private static func isDecodeOnly(_ sample: CMSampleBuffer) -> Bool {
+        guard let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[CFString: Any]],
+              let first = attachments.first else { return false }
+        return first[kCMSampleAttachmentKey_DoNotDisplay] as? Bool == true
+    }
+
     func append(_ sample: CMSampleBuffer, generation: UInt64 = 0) {
         decodeLock.lock()
         defer { decodeLock.unlock() }
@@ -132,7 +138,9 @@ final class PiPLiveFrameSource: @unchecked Sendable {
         let token = epoch
         frameLock.unlock()
         // No asynchronous flag: avoid a growing queue of compressed input.
-        let decodeStatus = VTDecompressionSessionDecodeFrame(session, sampleBuffer: sample, flags: [], infoFlagsOut: nil) { [weak self] status, _, image, timestamp, _ in
+        // Handoff overlap frames only rebuild decoder references; the main renderer hides them too.
+        let flags: VTDecodeFrameFlags = Self.isDecodeOnly(sample) ? [._DoNotOutputFrame] : []
+        let decodeStatus = VTDecompressionSessionDecodeFrame(session, sampleBuffer: sample, flags: flags, infoFlagsOut: nil) { [weak self] status, _, image, timestamp, _ in
             guard let self else { return }
             self.frameLock.lock()
             if status == noErr, image != nil { self.decodeOutputs += 1 }

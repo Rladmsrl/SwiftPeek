@@ -36,11 +36,12 @@ struct SettingsView: View {
                     Toggle("切到后台自动画中画", isOn: $settings.data.autoPictureInPicture)
                 }
                 Toggle("显示分辨率角标", isOn: $settings.data.showResolutionBadge)
-                LabeledContent("自动播放缓冲", value: "约 4 秒")
+                Toggle("弱网自动降低清晰度", isOn: $settings.data.autoLowerQuality)
+                LabeledContent("自动播放缓冲", value: "2–6 秒自适应")
             } header: {
                 Text("播放")
             } footer: {
-                Text("内存缓冲和后台换流可减少中断，会增加少量直播延迟，不保存视频到磁盘。关闭后台播放且未进入画中画时，退到后台会停止拉流以节省流量和电量。")
+                Text("内存缓冲和后台换流可减少中断，网络不稳时缓冲会自动加大，带来少量直播延迟，不保存视频到磁盘。弱网降档只影响当前直播间，不改默认清晰度。关闭后台播放且未进入画中画时，退到后台会停止拉流以节省流量和电量。")
             }
 
             // MARK: 弹幕

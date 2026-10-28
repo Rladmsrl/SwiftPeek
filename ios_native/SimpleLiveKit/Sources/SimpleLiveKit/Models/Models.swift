@@ -212,6 +212,24 @@ public struct LivePlayURL: Sendable {
         guard let id, let index = lineIDs.firstIndex(of: id), urls.indices.contains(index) else { return 0 }
         return index
     }
+
+    /// 用部分线路的新地址更新已有线路表：保留原有线路顺序，新地址覆盖同名线路，
+    /// 新出现的线路追加在后。任一方缺少线路身份时无法对齐，直接采用新结果。
+    public func merging(_ fresh: LivePlayURL) -> LivePlayURL {
+        guard lineIDs.count == urls.count, fresh.lineIDs.count == fresh.urls.count,
+              !lineIDs.isEmpty, !fresh.lineIDs.isEmpty else { return fresh }
+        var mergedURLs = urls
+        var mergedIDs = lineIDs
+        for (id, url) in zip(fresh.lineIDs, fresh.urls) {
+            if let index = mergedIDs.firstIndex(of: id) {
+                mergedURLs[index] = url
+            } else {
+                mergedIDs.append(id)
+                mergedURLs.append(url)
+            }
+        }
+        return LivePlayURL(urls: mergedURLs, lineIDs: mergedIDs, headers: fresh.headers ?? headers)
+    }
 }
 
 // MARK: - 消息

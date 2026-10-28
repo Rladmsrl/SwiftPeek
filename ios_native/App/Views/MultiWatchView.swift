@@ -423,6 +423,8 @@ private struct MultiWatchTile: View {
             retry("加载失败")
         } else if case .reconnecting = player.state {
             Text("正在重连…").font(.caption).foregroundStyle(.white)
+        } else if player.state == .waitingForNetwork {
+            Label("网络已断开", systemImage: "wifi.slash").font(.caption).foregroundStyle(.white)
         } else if player.state == .idle {
             Button { room.playback.play() } label: {
                 Label("播放", systemImage: "play.fill")

@@ -35,6 +35,9 @@ public protocol LiveSite: Sendable {
     func roomBrief(roomID: String) async throws -> LiveRoomBrief
     func playQualities(detail: LiveRoomDetail) async throws -> [LivePlayQuality]
     func playURL(detail: LiveRoomDetail, quality: LivePlayQuality) async throws -> LivePlayURL
+    /// 只解析指定线路。续接换流只需要一条线路；站点不支持时退回全量解析。
+    /// 结果可能只包含部分线路，调用方需要与已有线路合并。
+    func playURL(detail: LiveRoomDetail, quality: LivePlayQuality, lineIDs: [String]) async throws -> LivePlayURL
     func searchRooms(_ keyword: String, page: Int) async throws -> LiveSearchRoomResult
     func searchAnchors(_ keyword: String, page: Int) async throws -> LiveSearchAnchorResult
     func liveStatus(roomID: String) async throws -> Bool
@@ -43,5 +46,11 @@ public protocol LiveSite: Sendable {
 public extension LiveSite {
     func recommendRooms() async throws -> LiveCategoryResult {
         try await recommendRooms(page: 1)
+    }
+}
+
+public extension LiveSite {
+    func playURL(detail: LiveRoomDetail, quality: LivePlayQuality, lineIDs: [String]) async throws -> LivePlayURL {
+        try await playURL(detail: detail, quality: quality)
     }
 }
