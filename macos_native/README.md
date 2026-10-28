@@ -5,9 +5,9 @@
 
 ## 下载与安装
 
-当前版本 **0.8.4 (18)**：[下载 Universal ZIP](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.4-macos/SwiftPeek-0.8.4-macOS-universal.zip)，解压后将 SwiftPeek.app 拖入“应用程序”。同一包包含 Apple Silicon arm64 和 Intel x86_64，最低 macOS 26。Intel 与 macOS 26 真机播放尚未验证。
+当前版本 **0.8.5 (19)**：[下载 Universal ZIP](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.5-macos/SwiftPeek-0.8.5-macOS-universal.zip)，解压后将 SwiftPeek.app 拖入“应用程序”。同一包包含 Apple Silicon arm64 和 Intel x86_64，最低 macOS 26。Intel 与 macOS 26 真机播放尚未验证。
 
-包采用 ad-hoc 签名，未做 Developer ID 公证。核对[发布页](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.4-macos)的来源与 SHA-256 后，如被系统阻止，可按提示在“系统设置 → 隐私与安全性”允许该应用。包内隐私检查通过不代表完整安全保证，详见[隐私说明](../PRIVACY.md)。
+包采用 ad-hoc 签名，未做 Developer ID 公证。核对[发布页](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.5-macos)的来源与 SHA-256 后，如被系统阻止，可按提示在“系统设置 → 隐私与安全性”允许该应用。包内隐私检查通过不代表完整安全保证，详见[隐私说明](../PRIVACY.md)。
 
 ## 打开与构建
 
