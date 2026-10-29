@@ -2,10 +2,10 @@
 
 ## 版本
 
-两端只从 `shared/version.yml` 读取版本。当前双端版本为 0.8.5 (19)。每次发布递增版本和 build：
+两端只从 `shared/version.yml` 读取版本。当前双端版本为 0.8.6 (20)。每次发布递增版本和 build：
 
 ```sh
-python3 scripts/bump-version.py          # 0.8.5 -> 0.8.6，同时 build +1
+python3 scripts/bump-version.py          # 0.8.6 -> 0.8.7，同时 build +1
 python3 scripts/bump-version.py 0.9.0    # 显式指定更高版本
 ```
 
@@ -60,3 +60,7 @@ iOS IPA 上传后应下载回验，并将其摘要加入同一版本的 SHA256SU
 ## 双端 0.8.5 发布
 
 两端从同一提交构建，分别发布 [iOS 界面刷新](release-notes/0.8.5-ios.md) 和 [macOS 界面刷新](release-notes/0.8.5-macos.md)。沿用解包审计和下载回验流程，两端各自检查。
+
+## macOS 0.8.6 发布
+
+只发布 macOS：[直播稳定性与状态准确度](release-notes/0.8.6-macos.md)。版本与 build 同步递增到 0.8.6 (20)，但 iOS 仍停在 0.8.5，本版未构建、未发布 iOS 产物。沿用解包审计和下载回验流程。
