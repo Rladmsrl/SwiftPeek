@@ -19,6 +19,7 @@ struct SimpleLiveMacApp: App {
                 .tint(Theme.accent)
                 .preferredColorScheme(settings.data.appearance.colorScheme)
                 .frame(minWidth: 900, minHeight: 620)
+                .registersMainWindowOpener()
         }
         .defaultSize(width: 1240, height: 820)
         .defaultLaunchBehavior(.presented)
@@ -37,6 +38,7 @@ struct SimpleLiveMacApp: App {
                     .tint(Theme.accent)
                     .preferredColorScheme(settings.data.appearance.colorScheme)
                     .frame(minWidth: 760, minHeight: 500)
+                    .registersMainWindowOpener()
             }
         }
         .defaultSize(width: 1180, height: 760)
@@ -53,6 +55,7 @@ struct SimpleLiveMacApp: App {
                     .tint(Theme.accent)
                     .preferredColorScheme(settings.data.appearance.colorScheme)
                     .frame(minWidth: 820, minHeight: 540)
+                    .registersMainWindowOpener()
             }
         }
         .defaultSize(width: 1240, height: 800)
@@ -87,6 +90,47 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate {
         LiveDiagnostics.flush()
     }
 
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        let menu = NSMenu()
+        let item = NSMenuItem(title: "显示主窗口", action: #selector(showMainWindow), keyEquivalent: "")
+        item.target = self
+        menu.addItem(item)
+        return menu
+    }
+
+    /// Clicking the Dock icon with no visible windows brings back the library.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !flag else { return true }
+        MacMainWindow.show()
+        return false
+    }
+
+    @MainActor @objc private func showMainWindow() { MacMainWindow.show() }
+}
+
+/// AppKit entry points (Dock menu, reopen) can't reach SwiftUI's `openWindow`,
+/// so any app window registers it when it appears.
+@MainActor
+enum MacMainWindow {
+    fileprivate static var open: OpenWindowAction?
+
+    static func show() {
+        NSApp.activate()
+        open?(id: "library")
+    }
+}
+
+private struct MainWindowOpenerRegistration: ViewModifier {
+    @Environment(\.openWindow) private var openWindow
+    func body(content: Content) -> some View {
+        content.onAppear { MacMainWindow.open = openWindow }
+    }
+}
+
+extension View {
+    fileprivate func registersMainWindowOpener() -> some View {
+        modifier(MainWindowOpenerRegistration())
+    }
 }
 
 struct MacWindowCommands: Commands {
