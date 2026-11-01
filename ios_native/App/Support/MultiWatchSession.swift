@@ -261,7 +261,9 @@ final class MultiWatchSession<Player: MobilePlaybackEngine> {
                 room.playback.store.qualityPreferenceOverride = preference
                 if !room.playback.isWorking, !room.playback.store.qualities.isEmpty {
                     let count = room.playback.store.qualities.count
-                    let index = preference.index(in: count, lastQualityName: nil, names: [])
+                    // 弱网降过档的房间不再升回降档前的画质
+                    let index = min(count - 1, max(preference.index(in: count, lastQualityName: nil, names: []),
+                                                   room.playback.weakNetworkQualityFloor ?? 0))
                     if index != room.playback.store.selectedQualityIndex { room.playback.chooseQuality(index) }
                 }
             }

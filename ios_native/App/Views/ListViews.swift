@@ -24,6 +24,8 @@ private struct RoomGrid<Rooms: RandomAccessCollection>: View where Rooms.Element
 struct RecommendView: View {
     let store: RecommendStore
     @Binding var path: NavigationPath
+    /// 列表本身在屏上（没有被推入的直播间盖住、所在 Tab 被选中）
+    @State private var isShowing = false
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -44,10 +46,12 @@ struct RecommendView: View {
             .navigationTitle("斗鱼推荐")
             .liveDestinations()
             .refreshable { await store.refresh() }
-            .task {
-                if store.rooms.isEmpty { await store.refresh() } else { await store.refreshIfStale() }
-            }
-            .refreshesWhenReturning { await store.refreshIfStale() }
+            // 从直播间返回、切回 Tab 都不自动刷新，否则已翻过的几页会被第一页替换、位置丢失。
+            // 只在回到 App 且列表正显示时按过期刷新，或由用户下拉刷新。
+            .task { if store.rooms.isEmpty { await store.refresh() } }
+            .onAppear { isShowing = true }
+            .onDisappear { isShowing = false }
+            .refreshesWhenReturning { if isShowing { await store.refreshIfStale() } }
         }
     }
 }
@@ -107,6 +111,7 @@ struct CategoryView: View {
 
 struct CategoryRoomsView: View {
     @State private var store: CategoryRoomsStore
+    @State private var isShowing = false
 
     init(category: LiveSubCategory) {
         _store = State(initialValue: CategoryRoomsStore(category: category))
@@ -123,10 +128,11 @@ struct CategoryRoomsView: View {
         }
         .navigationTitle(store.category.name)
         .refreshable { await store.refresh() }
-        .task {
-            if store.rooms.isEmpty { await store.refresh() } else { await store.refreshIfStale() }
-        }
-        .refreshesWhenReturning { await store.refreshIfStale() }
+        // 与推荐页一致：返回时不自动刷新，回到 App 且列表正显示时才按过期刷新
+        .task { if store.rooms.isEmpty { await store.refresh() } }
+        .onAppear { isShowing = true }
+        .onDisappear { isShowing = false }
+        .refreshesWhenReturning { if isShowing { await store.refreshIfStale() } }
     }
 }
 

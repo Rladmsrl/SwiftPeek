@@ -24,6 +24,9 @@ public actor DouyuDanmakuClient: LiveDanmakuClient {
     public nonisolated let events: AsyncStream<DanmakuEvent>
 
     private var pumpTask: Task<Void, Never>?
+    /// 已发登录包、还没收到服务器的第一帧。收到之前不算就绪：
+    /// 握手失败的每次重连都报就绪，会把界面上的断开提示反复清掉。
+    private var awaitingFirstFrame = false
 
     public init(roomID: String) throws {
         self.roomID = roomID
@@ -64,17 +67,23 @@ public actor DouyuDanmakuClient: LiveDanmakuClient {
     private func handle(_ event: WebSocketEvent) async {
         switch event {
         case .opened:
+            awaitingFirstFrame = true
             await joinRoom()
-            continuation.yield(.ready)
         case .binary(let data):
+            if awaitingFirstFrame {
+                awaitingFirstFrame = false
+                continuation.yield(.ready)
+            }
             decode(data)
         case .text(let text):
             // 斗鱼只走二进制帧，出现文本帧说明协议异常
             continuation.yield(.notice("收到非预期文本帧：\(text.prefix(64))"))
         case .reconnecting(let attempt):
+            awaitingFirstFrame = false
             continuation.yield(.notice("与弹幕服务器断开，正在重连（第 \(attempt) 次）"))
         case .closed(let reason):
             continuation.yield(.closed(reason))
+            continuation.finish()
         }
     }
 

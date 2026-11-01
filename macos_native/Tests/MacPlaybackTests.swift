@@ -4,10 +4,10 @@ import Testing
 
 @Suite("Mac 链接入口")
 struct MacRoomLinkTests {
-    @Test("识别房间号、网页和深链", arguments: [" 74751 ", "https://www.douyu.com/74751?from=search", "douyu://room/74751", "simplelive://room/74751", "https://m.douyu.com/74751/"])
+    @Test("识别房间号、网页和深链", arguments: [" 74751 ", "https://www.douyu.com/74751?from=search", "douyu://room/74751", "simplelive://room/74751", "https://m.douyu.com/74751/", "douyu:74751", "douyu://74751"])
     func acceptsRoom(_ input: String) { #expect(MacRoomLink.roomID(input) == "74751") }
 
-    @Test("搜索词和不可信链接不作为房间号", arguments: ["主播名字", "https://douyu.com.evil.example/123", "https://example.com/123", "file:///123", "simplelive://wrong/123", "https://www.douyu.com/", "https://www.douyu.com/123/456", ""])
+    @Test("搜索词和不可信链接不作为房间号", arguments: ["主播名字", "https://douyu.com.evil.example/123", "https://example.com/123", "file:///123", "simplelive://wrong/123", "https://www.douyu.com/", "https://www.douyu.com/123/456", "", "simplelive://open?rid=74751&from=2", "douyu:abc"])
     func rejectsInvalid(_ input: String) { #expect(MacRoomLink.roomID(input) == nil) }
 }
 

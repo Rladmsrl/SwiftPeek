@@ -1,8 +1,146 @@
+import ImageIO
 import SimpleLiveKit
 import SwiftUI
 #if os(macOS)
 import AppKit
 #endif
+
+// MARK: - 视图持有的重对象
+
+/// 播放器、会话这类重对象只在第一次用到时创建一次。
+/// `State(initialValue:)` 不是惰性的：父视图每次重算都会先造一个完整的播放器再丢掉。
+@MainActor
+@Observable
+final class LazyViewObject<Value: AnyObject> {
+    @ObservationIgnored private var stored: Value?
+    private var revision = 0
+
+    func callAsFunction(_ make: () -> Value) -> Value {
+        _ = revision
+        if let stored { return stored }
+        let value = make()
+        stored = value
+        return value
+    }
+
+    /// 丢弃当前对象，下次读取时重建；读取过它的视图随之刷新。
+    func reset() {
+        stored = nil
+        revision += 1
+    }
+}
+
+// MARK: - 远程图片
+
+struct RemoteImageKey: Hashable, Sendable {
+    let url: URL
+    /// 缩略图最长边的像素数，按 64 取整，尺寸微调时共用同一份缓存
+    let pixels: Int
+    var name: String { "\(pixels)|\(url.absoluteString)" }
+}
+
+/// 封面、头像和分类图标共用：按显示像素用 ImageIO 生成缩略图并留在内存里。
+/// 网格回收单元格、切回 Tab 时直接复用，不再重新下载、整图解码和再次淡入。
+final class RemoteImageCache: @unchecked Sendable {
+    static let shared = RemoteImageCache()
+    private let images = NSCache<NSString, CGImage>()
+    private let session: URLSession
+
+    init() {
+        images.totalCostLimit = 48 * 1024 * 1024
+        let configuration = URLSessionConfiguration.default
+        let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("RemoteImages", isDirectory: true)
+        configuration.urlCache = URLCache(memoryCapacity: 4 * 1024 * 1024, diskCapacity: 128 * 1024 * 1024, directory: directory)
+        configuration.timeoutIntervalForRequest = 20
+        session = URLSession(configuration: configuration)
+    }
+
+    func cached(_ key: RemoteImageKey) -> CGImage? { images.object(forKey: key.name as NSString) }
+
+    /// 在调用方之外的执行器上下载与解码，不占主线程。
+    func image(for key: RemoteImageKey) async throws -> CGImage {
+        if let hit = cached(key) { return hit }
+        let (data, response) = try await session.data(from: key.url)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw URLError(.badServerResponse)
+        }
+        try Task.checkCancellation()
+        guard let image = Self.thumbnail(data, maxPixels: key.pixels) else { throw URLError(.cannotDecodeContentData) }
+        images.setObject(image, forKey: key.name as NSString, cost: image.bytesPerRow * image.height)
+        return image
+    }
+
+    private static func thumbnail(_ data: Data, maxPixels: Int) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary)
+        else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixels,
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+    }
+}
+
+/// 远程图片。缓存命中时直接显示；第一次下载完成时按 `animation` 淡入一次。
+/// `placeholder` 的参数表示是否加载失败。
+struct RemoteImage<Content: View, Placeholder: View>: View {
+    let url: String
+    var animation: Animation?
+    @ViewBuilder let content: (Image) -> Content
+    @ViewBuilder let placeholder: (Bool) -> Placeholder
+
+    private struct Loaded { let url: String; let image: CGImage }
+    @State private var loaded: Loaded?
+    @State private var failedURL: String?
+    @State private var points: CGFloat = 0
+    @Environment(\.displayScale) private var displayScale
+
+    init(url: String, animation: Animation? = nil,
+         @ViewBuilder content: @escaping (Image) -> Content,
+         @ViewBuilder placeholder: @escaping (Bool) -> Placeholder) {
+        self.url = url
+        self.animation = animation
+        self.content = content
+        self.placeholder = placeholder
+    }
+
+    private var key: RemoteImageKey? {
+        guard points > 0, let parsed = URL(string: url), parsed.scheme != nil else { return nil }
+        let pixels = max(64, Int((points * displayScale / 64).rounded(.up)) * 64)
+        return RemoteImageKey(url: parsed, pixels: pixels)
+    }
+
+    var body: some View {
+        let key = key
+        let image = key.flatMap(RemoteImageCache.shared.cached) ?? (loaded?.url == url ? loaded?.image : nil)
+        ZStack {
+            if let image {
+                content(Image(decorative: image, scale: displayScale)).transition(.opacity)
+            } else {
+                placeholder(failedURL == url)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onGeometryChange(for: CGFloat.self) { max($0.size.width, $0.size.height) } action: { points = $0 }
+        .task(id: key) {
+            guard let key, RemoteImageCache.shared.cached(key) == nil else { return }
+            // 已有同一地址、足够大的图（例如窗口缩小）就不再重新解码
+            if let loaded, loaded.url == url, max(loaded.image.width, loaded.image.height) >= key.pixels { return }
+            let url = url
+            do {
+                let image = try await RemoteImageCache.shared.image(for: key)
+                guard !Task.isCancelled else { return }
+                withAnimation(animation) { loaded = Loaded(url: url, image: image) }
+            } catch {
+                guard !Task.isCancelled, loaded?.url != url else { return }
+                failedURL = url
+            }
+        }
+    }
+}
 
 // MARK: - 封面
 
@@ -19,18 +157,15 @@ struct CoverImage: View {
             .fill(Theme.softFill)
             .aspectRatio(Theme.coverAspect, contentMode: .fit)
             .overlay {
-                AsyncImage(url: URL(string: url),
-                           transaction: Transaction(animation: reduceMotion ? nil : .easeOut(duration: 0.25))) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().scaledToFill()
-                            .scaleEffect(highlighted && !reduceMotion ? 1.04 : 1)
-                            .transition(.opacity)
-                    case .failure:
+                RemoteImage(url: url, animation: reduceMotion ? nil : .easeOut(duration: 0.25)) { image in
+                    image.resizable().scaledToFill()
+                        .scaleEffect(highlighted && !reduceMotion ? 1.04 : 1)
+                } placeholder: { failed in
+                    if failed {
                         Image(systemName: "photo")
                             .font(.title3)
                             .foregroundStyle(.tertiary)
-                    default:
+                    } else {
                         Color.clear
                     }
                 }
@@ -165,16 +300,14 @@ struct AvatarImage: View {
     var live = false
 
     var body: some View {
-        AsyncImage(url: URL(string: url)) { phase in
-            if case .success(let image) = phase {
-                image.resizable().scaledToFill()
-            } else {
-                ZStack {
-                    Theme.softFill
-                    Text(String(name.prefix(1)))
-                        .font(.system(size: size * 0.4, weight: .medium))
-                        .foregroundStyle(.secondary)
-                }
+        RemoteImage(url: url) { image in
+            image.resizable().scaledToFill()
+        } placeholder: { _ in
+            ZStack {
+                Theme.softFill
+                Text(String(name.prefix(1)))
+                    .font(.system(size: size * 0.4, weight: .medium))
+                    .foregroundStyle(.secondary)
             }
         }
         .frame(width: size, height: size)
@@ -357,16 +490,14 @@ struct CategoryTile: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            AsyncImage(url: URL(string: category.pic ?? "")) { phase in
-                if case .success(let image) = phase {
-                    image.resizable().scaledToFit()
-                        .clipShape(.rect(cornerRadius: 10))
-                        .padding(5)
-                } else {
-                    Image(systemName: "gamecontroller")
-                        .font(.system(size: 20, weight: .light))
-                        .foregroundStyle(.tertiary)
-                }
+            RemoteImage(url: category.pic ?? "") { image in
+                image.resizable().scaledToFit()
+                    .clipShape(.rect(cornerRadius: 10))
+                    .padding(5)
+            } placeholder: { _ in
+                Image(systemName: "gamecontroller")
+                    .font(.system(size: 20, weight: .light))
+                    .foregroundStyle(.tertiary)
             }
             .frame(width: Self.icon, height: Self.icon)
             .background(plate, in: .rect(cornerRadius: 14))

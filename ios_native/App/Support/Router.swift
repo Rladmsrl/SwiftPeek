@@ -1,4 +1,5 @@
 import Observation
+import SimpleLiveKit
 import SwiftUI
 
 enum AppTab: Hashable {
@@ -35,16 +36,14 @@ final class Router {
             return false
         }
 
-        // 支持 simplelive://room/9999 与 douyu:9999
-        var roomID: String?
-        if url.host == "room" {
-            roomID = url.pathComponents.first { $0 != "/" }
-        } else if let host = url.host, host.allSatisfy(\.isNumber) {
+        // 支持 simplelive://room/9999、douyu:9999 与 simplelive://9999。
+        // 只认这几种明确格式，与 Mac 共用同一个解析器；不再把链接里的所有数字拼成房间号。
+        let roomID: String?
+        let path = url.pathComponents.filter { $0 != "/" }
+        if let host = url.host, !host.isEmpty, path.isEmpty, host.allSatisfy({ $0.isASCII && $0.isNumber }) {
             roomID = host
         } else {
-            let path = url.absoluteString.replacingOccurrences(of: "\(scheme):", with: "")
-            let digits = path.filter(\.isNumber)
-            roomID = digits.isEmpty ? nil : digits
+            roomID = RoomLink.roomID(from: url.absoluteString)
         }
 
         guard let roomID, !roomID.isEmpty else { return false }

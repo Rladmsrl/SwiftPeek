@@ -54,7 +54,7 @@ struct DouyuProbe {
                 print("             已开播 \(format(duration))")
             }
             if let payload = detail.payload as? DouyuRoomPayload {
-                print("             签名 OK：\(payload.signArgs.prefix(72))…")
+                print("             签名 OK（\(payload.signArgs.count) 字符，内容不打印）")
             }
 
             guard detail.isLiving else {
@@ -78,7 +78,7 @@ struct DouyuProbe {
             print("[7] 播放地址 \(best.quality) 共 \(playURL.urls.count) 条线路")
             for (index, url) in playURL.urls.enumerated() {
                 let container = url.contains(".flv") ? "FLV" : (url.contains(".m3u8") ? "HLS" : "未知")
-                print("             线路\(index + 1) [\(container)] \(url.prefix(96))…")
+                print("             线路\(index + 1) [\(container)] \(redacted(url))")
             }
 
             // 8. 弹幕（实时抓 12 秒）
@@ -139,7 +139,7 @@ struct DouyuProbe {
             print("[2] 录像信息 \(detail.authorName) · \(detail.title)")
             print("             时长 \(Int(detail.duration))s 播放 \(detail.viewCount) 弹幕 \(detail.danmakuCount) 房间 \(detail.roomID)")
             for quality in source.qualities {
-                print("             \(quality.name)（\(quality.key)）\(quality.bitRate / 1000)kbps \(quality.url.prefix(48))…")
+                print("             \(quality.name)（\(quality.key)）\(quality.bitRate / 1000)kbps \(redacted(quality.url))")
             }
             var start = 0
             var total = 0
@@ -167,6 +167,12 @@ struct DouyuProbe {
             print("\n✗ 失败：\(error.localizedDescription)")
             exit(1)
         }
+    }
+
+    /// 播放地址只打印协议、主机和路径：查询串里是签名与时效凭据，哪怕截一段前缀也会带出来。
+    static func redacted(_ url: String) -> String {
+        guard let components = URLComponents(string: url), let host = components.host else { return "<无法解析的地址>" }
+        return "\(components.scheme ?? "?")://\(host)\(components.path)"
     }
 
     static func format(_ duration: Duration) -> String {

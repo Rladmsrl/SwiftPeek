@@ -97,13 +97,10 @@ private struct FloatingPlayerView: View {
     @State private var hovering = false
 
     var body: some View {
-        let danmaku = snapshot()
         ZStack {
             Color.black
             FloatingVideoSurface(videoLayer: layer).allowsHitTesting(false)
-            DanmakuOverlay(messages: danmaku.messages, settings: danmaku.settings,
-                           isVisible: danmaku.isVisible, clearToken: danmaku.clearToken, isPaused: danmaku.isPaused)
-                .id(danmaku.sourceID).allowsHitTesting(false)
+            FloatingDanmakuLayer(snapshot: snapshot).allowsHitTesting(false)
             FloatingPointerSurface(resize: false)
             if hovering || !isPlaying() {
                 VStack {
@@ -150,6 +147,18 @@ private struct FloatingPlayerView: View {
             .glassEffect(.regular.interactive(), in: .circle)
             .help(label).accessibilityLabel(label)
             .accessibilityAddTraits(active ? [.isSelected] : [])
+    }
+}
+
+/// Reads the chat snapshot in its own body, so each 80 ms batch only re-renders
+/// the overlay, not the window's controls, video host and pointer surfaces.
+private struct FloatingDanmakuLayer: View {
+    let snapshot: () -> PiPDanmakuSnapshot
+    var body: some View {
+        let danmaku = snapshot()
+        DanmakuOverlay(messages: danmaku.messages, settings: danmaku.settings,
+                       isVisible: danmaku.isVisible, clearToken: danmaku.clearToken, isPaused: danmaku.isPaused)
+            .id(danmaku.sourceID)
     }
 }
 

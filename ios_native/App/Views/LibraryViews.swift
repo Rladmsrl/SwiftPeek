@@ -22,6 +22,10 @@ struct FollowView: View {
                     }
                 } else {
                     let groups = library.followGroups()
+                    // 「其余」里只有确认未开播的才归到未开播；没查到或查询失败的单列为状态未知
+                    let offline = groups.rest.filter { library.followStatus($0.roomID) == .offline }
+                    let unknown = groups.rest.filter { library.followStatus($0.roomID) != .offline }
+                    let grouped = !groups.live.isEmpty || !groups.looping.isEmpty
                     List {
                         if !groups.live.isEmpty {
                             Section {
@@ -40,11 +44,18 @@ struct FollowView: View {
                                 Label("轮播中 · \(groups.looping.count)", systemImage: "repeat")
                             }
                         }
-                        if !groups.rest.isEmpty {
+                        if !offline.isEmpty {
                             Section {
-                                rows(groups.rest)
+                                rows(offline)
                             } header: {
-                                if !groups.live.isEmpty || !groups.looping.isEmpty { Text("未开播") }
+                                if grouped || !unknown.isEmpty { Text("未开播") }
+                            }
+                        }
+                        if !unknown.isEmpty {
+                            Section {
+                                rows(unknown)
+                            } header: {
+                                if grouped || !offline.isEmpty { Text("状态未知") }
                             }
                         }
                         Section {
@@ -72,15 +83,8 @@ struct FollowView: View {
                 }
             }
             .refreshable { await library.refreshFollowStatus() }
-            .task {
-                // 状态未知时首次进入自动刷新一次
-                if !library.follows.isEmpty,
-                   library.roomStatus.count < library.follows.count {
-                    await library.refreshFollowStatus()
-                } else {
-                    await library.refreshFollowStatusIfStale()
-                }
-            }
+            // 只补查缺状态的主播或按过期刷新，规则由 LibraryStore 统一，Mac 与 iOS 一致
+            .task { await library.refreshFollowStatusOnAppear() }
             .refreshesWhenReturning { await library.refreshFollowStatusIfStale() }
         }
     }

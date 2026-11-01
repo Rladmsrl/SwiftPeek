@@ -146,6 +146,26 @@ struct ReplayCheck {
         playback.setBackgrounded(false, keepAudio: false)
         precondition(playback.player.rate > 0)
         print("PASS: replay background stop/resume, manual pause and loading while backgrounded")
+
+        // Released without shutdown(): isolated deinit removes the time observer and
+        // item notifications instead of leaving them on a freed player.
+        var orphan: ReplayPlayer? = ReplayPlayer()
+        orphan!.load(url: short, at: 0, autoplay: true)
+        try await ready(orphan!)
+        weak let released = orphan
+        let orphanItem = orphan!.player.currentItem!
+        orphan = nil
+        try await Task.sleep(for: .milliseconds(50))
+        precondition(released == nil, "An unclosed replay player must be released, not kept alive by observers")
+        NotificationCenter.default.post(name: AVPlayerItem.didPlayToEndTimeNotification, object: orphanItem)
+
+        let session = ReplaySession()
+        session.close()
+        session.close()
+        precondition(session.player.state == .idle, "Closing is idempotent and shuts the player down")
+        session.open(hashID: "after-close")
+        precondition(session.hashID == nil, "A closed session cannot be reopened")
+        print("PASS: unclosed replay players clean up in deinit; session close is idempotent and final")
     }
 
     @MainActor static func ready(_ playback: ReplayPlayer) async throws {

@@ -19,6 +19,7 @@ final class PiPCompositeSource {
     private var lastFrame: CVPixelBuffer?
     private var lastSourceID: String?
     private var lastClearToken: Int?
+    private var lastFrameRevision: Int?
 
     init() {
         var timebase: CMTimebase?
@@ -43,10 +44,13 @@ final class PiPCompositeSource {
     private func capture(generation token: Int) {
         guard running, generation == token else { return }
         guard let snapshot = snapshot?() else { pump.submit(nil, generation: token); return }
-        if snapshot.sourceID != lastSourceID || snapshot.clearToken != lastClearToken {
+        // A seek (clearToken) or a decoder reset (frameRevision) makes the held frame stale.
+        if snapshot.sourceID != lastSourceID || snapshot.clearToken != lastClearToken
+            || snapshot.frameRevision != lastFrameRevision {
             lastFrame = nil
             lastSourceID = snapshot.sourceID
             lastClearToken = snapshot.clearToken
+            lastFrameRevision = snapshot.frameRevision
         }
         if let fresh = frame?() { lastFrame = fresh }
         if layer.superlayer == nil, let parent = parent?() {
@@ -76,6 +80,7 @@ final class PiPCompositeSource {
         lastFrame = nil
         lastSourceID = nil
         lastClearToken = nil
+        lastFrameRevision = nil
         ready = false
     }
 

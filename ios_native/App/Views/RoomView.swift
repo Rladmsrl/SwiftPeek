@@ -5,10 +5,15 @@ struct RoomView: View {
     let roomID: String
     let fallbackTitle: String
 
-    @State private var playback: MobileRoomPlaybackSession<FLVLivePlayer>
+    // 播放器、会话与画中画控制器只在第一次用到时创建；列表页重算时不会白建一套
+    @State private var playbackBox = LazyViewObject<MobileRoomPlaybackSession<FLVLivePlayer>>()
+    private var playback: MobileRoomPlaybackSession<FLVLivePlayer> {
+        playbackBox { MobileRoomPlaybackSession(roomID: roomID, player: FLVLivePlayer(), foreground: .shared) }
+    }
     private var store: RoomStore { playback.store }
     private var player: FLVLivePlayer { playback.player }
-    @State private var pip = PiPController()
+    @State private var pipBox = LazyViewObject<PiPController>()
+    private var pip: PiPController { pipBox { PiPController() } }
     @State private var isPiPActive = false
     /// 进入房间时所在的 Tab。用于区分「切 Tab（界面被盖住）」与
     /// 「真正离开房间（返回上一页）」——两者都会触发 onDisappear。
@@ -33,12 +38,12 @@ struct RoomView: View {
     init(roomID: String, fallbackTitle: String) {
         self.roomID = roomID
         self.fallbackTitle = fallbackTitle
-        _playback = State(initialValue: MobileRoomPlaybackSession(roomID: roomID, player: FLVLivePlayer()))
     }
 
     private var isFullscreen: Bool { wantsFullscreen }
 
-    private var isFollowed: Bool { library.isFollowed(roomID) }
+    /// 用真实房间号判断：别名 / 靓号进房时路由里的号与关注记录里的不同
+    private var isFollowed: Bool { library.isFollowed(store.detail?.roomID ?? roomID) }
 
     var body: some View {
         AdaptivePlaybackContainer(fullscreen: isFullscreen) {
@@ -56,7 +61,7 @@ struct RoomView: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, 12)
-                    RoomDanmakuList(store: store)
+                    RoomDanmakuList(store: store, isActive: !isFullscreen)
                 }
             }
         }
@@ -135,14 +140,15 @@ struct RoomView: View {
         .onDisappear {
             controlsHideTask?.cancel()
             if multiWatch.isPresented { pip.detach(); return }
+            // 全屏时没有 Tab 栏，只有深链会切走页面；无论是否切 Tab 都要恢复方向
+            if isFullscreen { exitFullscreen() }
 
             // 切 Tab 只是界面被盖住，人还在 App 里浏览——不该停流，
             // 否则切回来要整套重新拉（详情 + 签名 + 取流 + 弹幕重连）。
-            // 只有真正离开房间才收摊。
+            // 只有真正离开房间才收摊。同时只播一路由前台归属保证：别的页面接管时这里会暂停。
             let isTabSwitch = homeTab != nil && router.selectedTab != homeTab
             guard !isTabSwitch else { return }
 
-            if isFullscreen { exitFullscreen() }
             playback.close()
             pip.detach()
         }
@@ -699,7 +705,7 @@ struct RoomView: View {
             let store = playback.store
             return PiPDanmakuSnapshot(messages: store.messages, settings: settings.danmakuSettings,
                                       isVisible: settings.data.pictureInPictureDanmaku && store.isDanmakuVisible,
-                                      isPaused: !playback.playbackRequested, clearToken: playback.player.pipFrames.revision,
+                                      isPaused: !playback.playbackRequested, frameRevision: playback.player.pipFrames.revision,
                                       sourceID: store.roomID)
         }
         pip.onRequestPlay = { playback.play() }
@@ -779,7 +785,8 @@ struct RoomView: View {
                 Spacer(minLength: 8)
 
                 FollowButton(isFollowed: isFollowed) {
-                    guard let detail = store.detail else { return }
+                    // 只在按钮显示的状态与关注记录一致时切换，状态不同步时不会误取消
+                    guard let detail = store.detail, library.isFollowed(detail.roomID) == isFollowed else { return }
                     library.toggleFollow(detail: detail)
                 }
                 .disabled(store.detail == nil)
@@ -812,15 +819,18 @@ struct RoomView: View {
 
 // MARK: - 弹幕列表
 
-/// 独立成视图，弹幕到达时只重算列表本身
+/// 独立成视图，弹幕到达时只重算列表本身。
+/// 全屏时侧栏尺寸为零，`isActive` 为 false：不读 `messages`，也不跟着每批弹幕比对和滚动。
 private struct RoomDanmakuList: View {
     let store: RoomStore
+    let isActive: Bool
 
     var body: some View {
+        let messages = isActive ? store.messages : []
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(store.messages) { message in
+                    ForEach(messages) { message in
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Text(message.userName)
                                 .font(.caption)
@@ -839,7 +849,7 @@ private struct RoomDanmakuList: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
 
-                if store.messages.isEmpty {
+                if isActive, messages.isEmpty {
                     Text(store.phase == .loading ? "连接弹幕中…" : "暂无弹幕")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
@@ -847,7 +857,7 @@ private struct RoomDanmakuList: View {
                         .padding(.top, 40)
                 }
             }
-            .onChange(of: store.messages.last?.id) { _, newValue in
+            .onChange(of: messages.last?.id) { _, newValue in
                 guard let newValue else { return }
                 // 不做动画：热门房一批弹幕就会滚一次，动画会把主线程占住
                 proxy.scrollTo(newValue, anchor: .bottom)

@@ -70,13 +70,11 @@ struct MacLibraryView: View {
             detailPath = NavigationPath()
             if value == .search { searchFocused = true }
         }
-        .onOpenURL { url in
-            if followTransfer.receive(url) { selection = .follows; return }
-            if let replay = DouyuReplayService.parseLink(url.absoluteString) {
-                openWindow(id: "replay", value: ReplayRoute(hashID: replay.hashID, start: replay.start))
-            } else if let id = MacRoomLink.roomID(url.absoluteString) { openRoom(id) }
-            else { linkError = "无法识别这个直播间链接" }
-        }
+        // 主窗口优先接收链接与关注文件；直播间 / 录像窗口收到的也会转交到这里
+        .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
+        .onOpenURL(perform: handle)
+        .onAppear { MacExternalLinks.register(handle) }
+        .onDisappear { MacExternalLinks.unregister() }
         .alert("打开直播间失败", isPresented: Binding(get: { linkError != nil }, set: { if !$0 { linkError = nil } })) {
             Button("好") { linkError = nil }
         } message: { Text(linkError ?? "") }
@@ -141,7 +139,7 @@ struct MacLibraryView: View {
             categoryContent
         case .follows:
             followContent
-                .task { await library.refreshFollowStatus() }
+                .task { await library.refreshFollowStatusOnAppear() }
                 .refreshesWhenReturning { await library.refreshFollowStatusIfStale() }
         case .history:
             historyContent
@@ -194,7 +192,9 @@ struct MacLibraryView: View {
         let groups = library.followGroups()
         let liveFollows = groups.live
         let loopingFollows = groups.looping
-        let otherFollows = groups.rest
+        // 查询失败或尚未刷新的不算“未开播”
+        let offlineFollows = groups.rest.filter { library.followStatus($0.roomID) == .offline }
+        let unknownFollows = groups.rest.filter { library.followStatus($0.roomID) != .offline }
         return VStack(alignment: .leading, spacing: 28) {
             if library.follows.isEmpty {
                 MacEmptyState(symbol: "heart", title: "还没有关注的主播",
@@ -207,9 +207,12 @@ struct MacLibraryView: View {
                 if !loopingFollows.isEmpty {
                     followGroup("轮播中 · \(loopingFollows.count)", loopingFollows)
                 }
-                if !otherFollows.isEmpty {
-                    let grouped = !liveFollows.isEmpty || !loopingFollows.isEmpty
-                    followGroup(grouped ? "未开播" : (library.isRefreshingFollows ? "正在更新开播状态…" : nil), otherFollows)
+                if !offlineFollows.isEmpty {
+                    let grouped = !liveFollows.isEmpty || !loopingFollows.isEmpty || !unknownFollows.isEmpty
+                    followGroup(grouped ? "未开播" : nil, offlineFollows)
+                }
+                if !unknownFollows.isEmpty {
+                    followGroup(library.isRefreshingFollows ? "正在更新开播状态…" : "状态未知", unknownFollows)
                 }
                 HStack(spacing: 12) {
                     Text("通过隔空投送，把关注合并到另一台设备。")
@@ -308,6 +311,13 @@ struct MacLibraryView: View {
     // MARK: 动作
 
     private func openRoom(_ id: String) { openWindow(id: "room", value: id) }
+    private func handle(_ url: URL) {
+        if followTransfer.receive(url) { selection = .follows; return }
+        if let replay = DouyuReplayService.parseLink(url.absoluteString) {
+            openWindow(id: "replay", value: ReplayRoute(hashID: replay.hashID, start: replay.start))
+        } else if let id = MacRoomLink.roomID(url.absoluteString) { openRoom(id) }
+        else { linkError = "无法识别这个直播间链接" }
+    }
     private func openReplays(_ roomID: String) { openWindow(id: "replay", value: ReplayRoute(roomID: roomID)) }
     private func submit() {
         if let replay = DouyuReplayService.parseLink(query) {

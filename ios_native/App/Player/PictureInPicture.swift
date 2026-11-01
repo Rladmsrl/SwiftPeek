@@ -19,6 +19,9 @@ final class PiPController: NSObject {
     var danmakuSnapshot: (() -> PiPDanmakuSnapshot)?
     private let composite = PiPCompositeSource()
     private let preference = PiPDanmakuPreference()
+    /// Whether AVKit currently mirrors the composite layer. Swapping contentSource
+    /// during active PiP can flicker, so only swap when the kind actually changes.
+    private var showsComposite = false
 
     /// PiP 小窗点了播放时回调。直播没有缓冲区可续播，只能重新拉流。
     var onRequestPlay: (() -> Void)?
@@ -32,7 +35,7 @@ final class PiPController: NSObject {
     func invalidatePlaybackState() { controller?.invalidatePlaybackState() }
 
     func refreshDanmaku() {
-        guard isActive, let player, let controller else { return }
+        guard isActive, let player, controller != nil else { return }
         if danmakuSnapshot?().isVisible == true {
             player.pipFrames.setEnabled(true)
             composite.snapshot = { [weak self] in self?.danmakuSnapshot?() ?? PiPDanmakuSnapshot() }
@@ -42,13 +45,21 @@ final class PiPController: NSObject {
                 guard let self, let controller = self.controller, self.isActive else { return }
                 controller.contentSource = AVPictureInPictureController.ContentSource(
                     sampleBufferDisplayLayer: self.composite.layer, playbackDelegate: self)
+                self.showsComposite = true
             }
             composite.start()
         } else {
-            controller.contentSource = AVPictureInPictureController.ContentSource(
-                sampleBufferDisplayLayer: player.displayLayer, playbackDelegate: self)
+            showPlayerLayer()
             stopComposite()
         }
+    }
+
+    private func showPlayerLayer() {
+        guard showsComposite else { return }
+        showsComposite = false
+        guard let player, let controller else { return }
+        controller.contentSource = AVPictureInPictureController.ContentSource(
+            sampleBufferDisplayLayer: player.displayLayer, playbackDelegate: self)
     }
 
     private func stopComposite() {
@@ -100,6 +111,7 @@ final class PiPController: NSObject {
         controller = nil
         player = nil
         isActive = false
+        showsComposite = false
         onRequestPlay = nil
         onRequestPause = nil
         isPlaybackRequested = nil
@@ -194,10 +206,7 @@ extension PiPController: AVPictureInPictureControllerDelegate {
         MainActor.assumeIsolated {
             isActive = false
             stopComposite()
-            if let player {
-                controller?.contentSource = AVPictureInPictureController.ContentSource(
-                    sampleBufferDisplayLayer: player.displayLayer, playbackDelegate: self)
-            }
+            showPlayerLayer()
             onStateChange?(false)
         }
     }

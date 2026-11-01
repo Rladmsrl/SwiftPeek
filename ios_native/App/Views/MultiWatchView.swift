@@ -301,7 +301,7 @@ private struct MultiWatchTile: View {
                     showControls()
                 }
             }
-            .accessibilityLabel("主画面：\(room.name)")
+            .accessibilityLabel(selected ? "主画面：\(room.name)" : "副画面：\(room.name)")
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { workspace.select(room.id) }
             .accessibilityIdentifier("multiwatch.tile.\(room.id)")

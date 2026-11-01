@@ -139,6 +139,7 @@ final class PiPFramePump: @unchecked Sendable {
                     let expected = previous.mediaTime.seconds + (input.hostTime - previous.hostTime) * Double(previous.rate)
                     if input.snapshot.sourceID != previous.snapshot.sourceID
                         || input.snapshot.clearToken != previous.snapshot.clearToken
+                        || input.snapshot.frameRevision != previous.snapshot.frameRevision
                         || abs(input.mediaTime.seconds - expected) > 0.5 {
                         flush()
                     }

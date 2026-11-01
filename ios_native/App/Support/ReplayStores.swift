@@ -151,7 +151,9 @@ final class ReplaySession {
     private(set) var segments: [DouyuReplayVideo] = []
     private(set) var phase: LoadPhase = .idle
     private(set) var feed: ReplayDanmakuFeed?
-    var isDanmakuVisible = true
+    var isDanmakuVisible = true {
+        didSet { if isDanmakuVisible != oldValue { player.danmakuVisibilityChanged() } }
+    }
     /// 播放结束后自动播下一段
     var autoAdvance = true
 
@@ -356,6 +358,9 @@ final class ReplaySession {
 
     private func isCurrent(_ token: Int) -> Bool { !closed && token == generation && !Task.isCancelled }
 
+    /// 真正离开录像页 / 关闭窗口时调用，可重复调用。保存进度与音量，停止弹幕与热度加载，
+    /// 并经 `player.shutdown()` 收起画中画——录像小窗不跨页面保留（与直播一致）。
+    /// 若以后要让小窗在返回列表后继续播放，需要把会话移到页面之外持有，再跳过这里。
     func close() {
         guard !closed else { return }
         saveProgress(force: true)

@@ -39,9 +39,12 @@ struct LiveJitterPolicy {
         return startupSteps.contains { waited >= $0.waited && seconds >= $0.seconds }
     }
 
-    static func shouldResume(seconds: Double, target: Double, ready: Bool, count: Int, ended: Bool, waited: TimeInterval) -> Bool {
+    /// `capacityLimited`: the buffer cannot grow (memory cap), so waiting longer gains nothing.
+    /// The 4-second startup readiness is deliberately not an escape: the 4.5 and 6 second
+    /// refill levels must be reachable.
+    static func shouldResume(seconds: Double, target: Double, capacityLimited: Bool, count: Int, ended: Bool, waited: TimeInterval) -> Bool {
         guard count > 0 else { return false }
-        return ready || seconds >= target || ended || waited >= rebufferTimeout
+        return capacityLimited || seconds >= target || ended || waited >= rebufferTimeout
     }
 
     /// The renderer drained. Returns how much media to buffer before resuming.

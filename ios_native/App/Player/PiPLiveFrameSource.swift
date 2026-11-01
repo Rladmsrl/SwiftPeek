@@ -43,6 +43,9 @@ final class PiPLiveFrameSource: @unchecked Sendable {
     private var format: CMFormatDescription?
     private var frames: [(CMTime, CVPixelBuffer)] = []
     private var lastInput = CMTime.invalid
+    /// After any reset, decoding starts at a sync sample. P/B frames without their
+    /// references either fail or decode into visibly corrupt pictures.
+    private var awaitingKeyframe = true
     private var epoch = 0
     private var cadence = PiPVideoSamplingClock()
     private var pool: CVPixelBufferPool?
@@ -61,6 +64,7 @@ final class PiPLiveFrameSource: @unchecked Sendable {
     private var samplingDrops = 0
     private var cacheEvictions = 0
     private var frameMisses = 0
+    private var keyframeSkips = 0
     private var lastDecodeStatus: OSStatus = noErr
 
     func setEnabled(_ enabled: Bool) {
@@ -92,6 +96,7 @@ final class PiPLiveFrameSource: @unchecked Sendable {
         session = nil
         format = nil
         lastInput = .invalid
+        awaitingKeyframe = true
         frameLock.lock()
         epoch += 1
         frames.removeAll()
@@ -104,10 +109,11 @@ final class PiPLiveFrameSource: @unchecked Sendable {
         processingLock.unlock()
     }
 
-    private static func isDecodeOnly(_ sample: CMSampleBuffer) -> Bool {
+    private static func attachments(_ sample: CMSampleBuffer) -> (decodeOnly: Bool, sync: Bool) {
         guard let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[CFString: Any]],
-              let first = attachments.first else { return false }
-        return first[kCMSampleAttachmentKey_DoNotDisplay] as? Bool == true
+              let first = attachments.first else { return (false, true) }
+        return (first[kCMSampleAttachmentKey_DoNotDisplay] as? Bool == true,
+                first[kCMSampleAttachmentKey_NotSync] as? Bool != true)
     }
 
     func append(_ sample: CMSampleBuffer, generation: UInt64 = 0) {
@@ -116,11 +122,24 @@ final class PiPLiveFrameSource: @unchecked Sendable {
         guard enabled, generation == streamGeneration,
               let newFormat = CMSampleBufferGetFormatDescription(sample) else { return }
         let pts = CMSampleBufferGetPresentationTimeStamp(sample)
+        let (decodeOnly, sync) = Self.attachments(sample)
+        // A splice handoff replays up to ten seconds of overlap on the old timeline as
+        // decode-only input. Only displayable samples define the stream position;
+        // otherwise every long overlap would look like a restart and wipe the lookahead.
         if format.map({ !CMFormatDescriptionEqual($0, otherFormatDescription: newFormat) }) == true
-            || (lastInput.isValid && pts.seconds < lastInput.seconds - 1) {
+            || (!decodeOnly && lastInput.isValid && pts.seconds < lastInput.seconds - 1) {
             resetDecoder()
         }
-        lastInput = pts
+        if awaitingKeyframe {
+            guard sync else {
+                frameLock.lock()
+                keyframeSkips += 1
+                frameLock.unlock()
+                return
+            }
+            awaitingKeyframe = false
+        }
+        if !decodeOnly { lastInput = pts }
         if session == nil {
             let attributes: [String: Any] = [
                 kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
@@ -139,12 +158,14 @@ final class PiPLiveFrameSource: @unchecked Sendable {
         frameLock.unlock()
         // No asynchronous flag: avoid a growing queue of compressed input.
         // Handoff overlap frames only rebuild decoder references; the main renderer hides them too.
-        let flags: VTDecodeFrameFlags = Self.isDecodeOnly(sample) ? [._DoNotOutputFrame] : []
+        let flags: VTDecodeFrameFlags = decodeOnly ? [._DoNotOutputFrame] : []
         let decodeStatus = VTDecompressionSessionDecodeFrame(session, sampleBuffer: sample, flags: flags, infoFlagsOut: nil) { [weak self] status, _, image, timestamp, _ in
             guard let self else { return }
             self.frameLock.lock()
-            if status == noErr, image != nil { self.decodeOutputs += 1 }
-            else { self.decodeFailures += 1; self.lastDecodeStatus = status }
+            // `_DoNotOutputFrame` (handoff overlap) and dropped frames report noErr
+            // without an image. They are expected, not decode failures.
+            if status != noErr { self.decodeFailures += 1; self.lastDecodeStatus = status }
+            else if image != nil { self.decodeOutputs += 1 }
             self.frameLock.unlock()
             guard status == noErr, let image else { return }
             self.processingLock.lock()
@@ -247,14 +268,15 @@ final class PiPLiveFrameSource: @unchecked Sendable {
             "decodeOutputFPS": String(format: "%.1f", Double(decodeOutputs) / elapsed),
             "decodeFailures": String(decodeFailures), "decodeStatus": String(lastDecodeStatus),
             "samplingDrops": String(samplingDrops), "cacheEvictions": String(cacheEvictions),
-            "frameMisses": String(frameMisses), "cachedFrames": String(frames.count),
+            "frameMisses": String(frameMisses), "keyframeSkips": String(keyframeSkips),
+            "cachedFrames": String(frames.count),
             "oldestAheadMS": String(format: "%.1f", ((frames.first?.0.seconds ?? time.seconds) - time.seconds) * 1000),
             "newestAheadMS": String(format: "%.1f", ((frames.last?.0.seconds ?? time.seconds) - time.seconds) * 1000)
         ])
         reportStart = now
         decodeInputs = 0; decodeOutputs = 0; decodeFailures = 0
         lastDecodeStatus = noErr
-        samplingDrops = 0; cacheEvictions = 0; frameMisses = 0
+        samplingDrops = 0; cacheEvictions = 0; frameMisses = 0; keyframeSkips = 0
     }
 
     deinit { if let session { VTDecompressionSessionInvalidate(session) } }

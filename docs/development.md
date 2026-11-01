@@ -6,7 +6,7 @@
 ## 构建配置
 
 - `ios_native/project.yml`：部署目标 iOS 26+，使用 Xcode 27.1+ / iOS 27.1+ SDK 构建 iPhone、iPhone Duo 与 iPad 应用。使用自己的签名团队；无签名编译不会安装设备。
-- `macos_native/project.yml`：macOS 27+，默认 ad-hoc 签名。
+- `macos_native/project.yml`：部署目标 macOS 26+，使用 macOS 27 SDK 构建，默认 ad-hoc 签名。
 - 两端都通过 XcodeGen 生成工程，生成目录不纳入版本控制。
 - `DEVELOPER_DIR` 可指定完整 Xcode 的 Developer 目录，避免只使用 Command Line Tools。
 - 当前共享媒体代码包含 SDK 已标记弃用但仍可编译的 AVFoundation 队列 API；后续迁移需要单独验证播放语义。

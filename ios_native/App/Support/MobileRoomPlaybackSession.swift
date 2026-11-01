@@ -36,19 +36,31 @@ final class MobileRoomPlaybackSession<Player: MobilePlaybackEngine> {
     private var generation = 0
     private var operation: Task<Void, Never>?
     private var backgroundTask: Task<Void, Never>?
+    /// 实际生效的暂停：多画面中断（`externalSuspended`）或让出前台（`yielded`）任一成立。
     private var suspended = false
+    private var externalSuspended = false
+    private var yielded = false
+    /// 关闭后再次打开（例如从录像页返回）时换新 store：旧 store 的弹幕连接已停，地址也可能过期。
+    private var hasClosed = false
+    private let foreground: ForegroundPlayback?
+    /// 弱网自动降档后的最低一档（清晰度从高到低排列，下标越大画质越低）。
+    /// 多画面的自动画质不会再调回这一档之上，否则降档一秒后又被升回去，反复重连。
+    private(set) var weakNetworkQualityFloor: Int?
     @ObservationIgnored private var interruptionToken: UUID?
     private var managedByMultiWatch: Bool
     private var telemetry: Task<Void, Never>?
     private var settings: AppSettings?
     private var library: LibraryStore?
 
-    init(roomID: String, player: Player, site: (any LiveSite)? = nil, backgroundGrace: Duration = .milliseconds(300), managedByMultiWatch: Bool = false) {
+    /// `foreground` 只给单画面页面传入；多画面里的房间由多画面统一调度，不参与前台归属。
+    init(roomID: String, player: Player, site: (any LiveSite)? = nil, backgroundGrace: Duration = .milliseconds(300),
+         managedByMultiWatch: Bool = false, foreground: ForegroundPlayback? = nil) {
         self.roomID = roomID
         self.player = player
         self.site = site
         self.backgroundGrace = backgroundGrace
         self.managedByMultiWatch = managedByMultiWatch
+        self.foreground = foreground
         store = RoomStore(roomID: roomID, site: site)
     }
 
@@ -59,6 +71,15 @@ final class MobileRoomPlaybackSession<Player: MobilePlaybackEngine> {
         if !opened { player.volume = settings.data.playerVolume }
         updateInterruptionObservation()
         activate(autoPlay: autoPlay ?? settings.data.autoPlay)
+        // 页面出现且要播放（自动播放、或之前被让出）时接管前台：其他单画面页面暂停，自己续播。
+        // 用户手动停掉的房间切回来不抢，避免无故打断另一个 Tab 里还在播的页面。
+        if wantsPlayback { claimForeground() }
+    }
+
+    /// 让本房间成为唯一在播的单画面页面。多画面接管期间不参与。
+    func claimForeground() {
+        guard opened, !managedByMultiWatch, let foreground else { return }
+        foreground.claim(self)
     }
 
     /// The player page lends its existing session to multi-watch without stopping
@@ -82,6 +103,7 @@ final class MobileRoomPlaybackSession<Player: MobilePlaybackEngine> {
     /// Opening an already-open tab must never restart a paused/playing session.
     func activate(autoPlay: Bool) {
         guard !opened else { return }
+        let selection = hasClosed ? replaceStore(stoppingPrevious: false) : nil
         opened = true
         wantsPlayback = autoPlay
         player.onPrepareStream = { [weak self] rotate in
@@ -94,7 +116,7 @@ final class MobileRoomPlaybackSession<Player: MobilePlaybackEngine> {
             self.store.commitReplacementStream(prepared)
         }
         player.onSustainedUnderrun = { [weak self] in self?.lowerQualityForWeakNetwork() }
-        loadRoom()
+        loadRoom(selection: selection)
         LiveDiagnostics.record("room.open", roomID: roomID, fields: player.diagnosticFields)
         telemetry = Task { [weak self] in
             while !Task.isCancelled {
@@ -108,11 +130,26 @@ final class MobileRoomPlaybackSession<Player: MobilePlaybackEngine> {
 
     func waitUntilLoaded() async { await operation?.value }
 
-    deinit {
+    /// 兜底：页面被直接销毁而没走 close() 时（深链替换导航栈，隐藏 Tab 里的房间随之移除），
+    /// 播放器的拉流任务强引用着播放器本身，不会自己停下；这里按正常离开收尾，停流并断开弹幕。
+    /// 只做必要的收尾，不改动自身的可观察状态。
+    isolated deinit {
         #if os(iOS)
-        let token = interruptionToken
-        Task { @MainActor in MobilePlaybackInterruption.shared.remove(token) }
+        MobilePlaybackInterruption.shared.remove(interruptionToken)
         #endif
+        guard opened else { return }
+        operation?.cancel()
+        backgroundTask?.cancel()
+        telemetry?.cancel()
+        if !managedByMultiWatch { settings?.data.playerVolume = player.volume }
+        store.cancelPendingStreamRequest()
+        player.onPrepareStream = nil
+        player.onCommitStream = nil
+        player.onSustainedUnderrun = nil
+        player.stop()
+        let store = self.store
+        Task { await store.stop() }
+        LiveDiagnostics.record("room.close", roomID: roomID, fields: player.diagnosticFields)
     }
 
     private var mayPlay: Bool { wantsPlayback && !suspended && (!isBackgrounded || backgroundAudio || pictureInPictureActive) }
@@ -144,7 +181,10 @@ final class MobileRoomPlaybackSession<Player: MobilePlaybackEngine> {
     }
 
     func play() {
-        guard opened, !isWorking else { return }
+        guard opened else { return }
+        // 用户点播放（含画中画里的播放键）等于要这一路出声；若之前被让出，接管时会直接续播
+        claimForeground()
+        guard !isWorking else { return }
         wantsPlayback = true
         guard mayPlay else { resumeAfterBackground = true; return }
         guard store.detail?.isLiving == true, !store.qualities.isEmpty else {
@@ -164,10 +204,17 @@ final class MobileRoomPlaybackSession<Player: MobilePlaybackEngine> {
     }
 
     private func reloadRoom() {
+        loadRoom(selection: replaceStore(stoppingPrevious: true))
+    }
+
+    /// 换一个全新的 RoomStore，沿用画质偏好、弹幕开关与投递限制，返回旧的清晰度 / 线路选择。
+    private func replaceStore(stoppingPrevious: Bool) -> RoomStore.Selection {
         let previous = store
         let selection = previous.playbackSelection
-        previous.cancelPendingStreamRequest()
-        Task { await previous.stop() }
+        if stoppingPrevious {
+            previous.cancelPendingStreamRequest()
+            Task { await previous.stop() }
+        }
         store = RoomStore(roomID: roomID, site: site)
         store.qualityPreferenceOverride = previous.qualityPreferenceOverride
         store.remembersQuality = previous.remembersQuality
@@ -175,7 +222,8 @@ final class MobileRoomPlaybackSession<Player: MobilePlaybackEngine> {
         store.isDanmakuVisible = previous.isDanmakuVisible
         store.setDanmakuDeliveryLimit(previous.danmakuMessagesPerSecond)
         store.setDanmakuDeliveryEnabled(previous.danmakuDeliveryEnabled)
-        loadRoom(selection: selection)
+        weakNetworkQualityFloor = nil
+        return selection
     }
 
     func stopPlayback() {
@@ -223,6 +271,7 @@ final class MobileRoomPlaybackSession<Player: MobilePlaybackEngine> {
             guard let self, self.current(token) else { return }
             self.isWorking = false
             guard changed else { return }
+            self.weakNetworkQualityFloor = max(self.weakNetworkQualityFloor ?? 0, index)
             store.danmakuNotice = "网络较差，已自动切换到\(name)"
             if self.mayPlay, let url = store.currentStreamURL {
                 self.player.start(url: url, headers: store.playURL?.headers)
@@ -243,6 +292,15 @@ final class MobileRoomPlaybackSession<Player: MobilePlaybackEngine> {
     func setPictureInPictureActive(_ active: Bool) { pictureInPictureActive = active; reconcileBackground() }
     func setSceneBackgrounded(_ backgrounded: Bool) { isBackgrounded = backgrounded; reconcileBackground() }
     func setSuspended(_ value: Bool) {
+        externalSuspended = value
+        applySuspension()
+    }
+    private func setYielded(_ value: Bool) {
+        yielded = value
+        applySuspension()
+    }
+    private func applySuspension() {
+        let value = externalSuspended || yielded
         guard value != suspended else { return }
         suspended = value
         if value {
@@ -279,8 +337,12 @@ final class MobileRoomPlaybackSession<Player: MobilePlaybackEngine> {
     func close() {
         guard opened else { return }
         opened = false
+        hasClosed = true
         wantsPlayback = false
         resumeAfterBackground = false
+        yielded = false
+        suspended = externalSuspended
+        foreground?.release(self)
         backgroundTask?.cancel()
         backgroundTask = nil
         telemetry?.cancel()
@@ -298,4 +360,8 @@ final class MobileRoomPlaybackSession<Player: MobilePlaybackEngine> {
         Task { await store.stop() }
         LiveDiagnostics.record("room.close", roomID: roomID, fields: player.diagnosticFields)
     }
+}
+
+extension MobileRoomPlaybackSession: ForegroundPlaybackParticipant {
+    func foregroundPlaybackChanged(owned: Bool) { setYielded(!owned) }
 }

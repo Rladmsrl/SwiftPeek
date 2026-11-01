@@ -32,10 +32,20 @@ actor LiveTagBuffer {
     private var audioHeader: FLVTag?
     private var started = false
     private var firstTimestamp: UInt32?
+    /// Newest media timestamp seen, not the last pushed: audio and video interleave
+    /// with small inversions, and an unsigned difference would wrap to ~49 days.
     private var lastTimestamp: UInt32?
     private var ended = false
     private var error: Error?
     private var capacityLimited = false
+    /// The blocked producer, woken by `pop()` once there is real room, by `finish()` or by cancellation.
+    private var spaceWaiter: CheckedContinuation<Void, Never>?
+    private var pendingBytes = 0
+    /// The consumer idling at the live edge, woken by the next tag or `finish()`.
+    private var tagWaiter: (id: Int, continuation: CheckedContinuation<Void, Never>)?
+    private var nextWaiterID = 0
+    /// Wake a full producer only after this much media has been consumed, not after every tag.
+    static let refillMargin = 0.5
 
     func append(_ tag: FLVTag) async throws {
         try Task.checkCancellation()
@@ -43,11 +53,12 @@ actor LiveTagBuffer {
         guard tag.payload.count <= Self.maximumBytes else { throw LivePlayerError.network("直播分块过大") }
         if !started {
             if tag.type == .video {
-                guard let video = FLVVideoTag(payload: tag.payload) else { throw LivePlayerError.unsupportedCodec }
-                if case .sequenceHeader = video.packet { videoHeader = tag; return }
-                guard video.isKeyframe, case .nalus = video.packet, let header = videoHeader else { return }
+                guard let header = FLVVideoTag.Header(payload: tag.payload) else { return }
+                guard header.isAVC else { throw LivePlayerError.unsupportedCodec }
+                if header.isSequenceHeader { videoHeader = tag; return }
+                guard header.isKeyframe, header.isNALUs, let sequenceHeader = videoHeader else { return }
                 started = true
-                push(header)
+                push(sequenceHeader)
                 if let audioHeader { push(audioHeader) }
             } else {
                 if tag.payload.first == 0xAF || (tag.payload.first.map { $0 >> 4 == 10 } ?? false),
@@ -55,9 +66,18 @@ actor LiveTagBuffer {
                 return
             }
         }
-        while !ended && (seconds >= Self.maximumSeconds || bytes + tag.payload.count > Self.maximumBytes || queue.count - cursor >= 4096) {
+        if isFull(adding: tag.payload.count) {
             capacityLimited = true
-            try await Task.sleep(for: .milliseconds(10))
+            pendingBytes = tag.payload.count
+            defer { pendingBytes = 0 }
+            try await withTaskCancellationHandler {
+                while !ended && isFull(adding: tag.payload.count) {
+                    try Task.checkCancellation()
+                    await withCheckedContinuation { spaceWaiter = $0 }
+                }
+            } onCancel: {
+                Task { await self.wakeProducer() }
+            }
         }
         try Task.checkCancellation()
         guard !ended else { throw CancellationError() }
@@ -65,12 +85,51 @@ actor LiveTagBuffer {
         push(tag)
     }
 
+    private func isFull(adding size: Int) -> Bool {
+        seconds >= Self.maximumSeconds || bytes + size > Self.maximumBytes || queue.count - cursor >= 4096
+    }
+
+    private func wakeProducer() {
+        spaceWaiter?.resume()
+        spaceWaiter = nil
+    }
+
+    /// Returns when a tag is available, the source ends, or `timeout` passes —
+    /// instead of the consumer polling an empty buffer every few milliseconds.
+    func waitForTag(timeout: Duration) async {
+        guard cursor >= queue.count, !ended, tagWaiter == nil, !Task.isCancelled else { return }
+        nextWaiterID += 1
+        let id = nextWaiterID
+        let timer = Task { [weak self] in
+            try? await Task.sleep(for: timeout)
+            await self?.wakeConsumer(id)
+        }
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { tagWaiter = (id, $0) }
+        } onCancel: {
+            Task { await self.wakeConsumer(id) }
+        }
+        timer.cancel()
+    }
+
+    private func wakeConsumer(_ id: Int? = nil) {
+        guard let waiter = tagWaiter, id == nil || waiter.id == id else { return }
+        tagWaiter = nil
+        waiter.continuation.resume()
+    }
+
     private func push(_ tag: FLVTag) {
         queue.append(tag)
         bytes += tag.payload.count
+        wakeConsumer()
         if isMedia(tag) {
             if firstTimestamp == nil { firstTimestamp = tag.timestamp }
-            lastTimestamp = tag.timestamp
+            // A large backward step is a new timeline (publisher restart); restart the maximum there.
+            if let last = lastTimestamp, Int64(tag.timestamp) >= Int64(last) - 1000 {
+                lastTimestamp = max(last, tag.timestamp)
+            } else {
+                lastTimestamp = tag.timestamp
+            }
         }
     }
     private func isMedia(_ tag: FLVTag) -> Bool {
@@ -78,7 +137,7 @@ actor LiveTagBuffer {
     }
     private var seconds: Double {
         guard let firstTimestamp, let lastTimestamp else { return 0 }
-        return Double(lastTimestamp &- firstTimestamp) / 1000
+        return Double(max(0, Int64(lastTimestamp) - Int64(firstTimestamp))) / 1000
     }
     func snapshot() -> Snapshot {
         Snapshot(seconds: seconds, bytes: bytes, count: queue.count - cursor,
@@ -97,9 +156,18 @@ actor LiveTagBuffer {
         }
         firstTimestamp = queue[cursor...].first(where: isMedia)?.timestamp
         if firstTimestamp == nil { lastTimestamp = nil }
+        if spaceWaiter != nil, !isFull(adding: pendingBytes),
+           seconds <= Self.maximumSeconds - Self.refillMargin || cursor == queue.count {
+            wakeProducer()
+        }
         return tag
     }
-    func finish(_ error: Error?) { ended = true; self.error = error }
+    func finish(_ error: Error?) {
+        ended = true
+        self.error = error
+        wakeProducer()
+        wakeConsumer()
+    }
 }
 
 /// When bytes last arrived from the socket. Read on every consumer iteration,
@@ -151,10 +219,12 @@ final class BufferedLiveSource: @unchecked Sendable {
                         parser.append(data)
                         while let tag = try parser.nextTag() {
                             // Validate replacement codec configuration before retiring the old source.
-                            if tag.type == .video {
-                                guard let video = FLVVideoTag(payload: tag.payload) else { throw LivePlayerError.unsupportedCodec }
-                                if case .sequenceHeader(let record) = video.packet {
-                                    guard let config = AVCConfig(record: record) else { throw LivePlayerError.unsupportedCodec }
+                            // Only the two header bytes are read per frame; the body is copied once, by the player.
+                            if tag.type == .video, let header = FLVVideoTag.Header(payload: tag.payload) {
+                                guard header.isAVC else { throw LivePlayerError.unsupportedCodec }
+                                if header.isSequenceHeader {
+                                    guard case .sequenceHeader(let record)? = FLVVideoTag(payload: tag.payload)?.packet,
+                                          let config = AVCConfig(record: record) else { throw LivePlayerError.unsupportedCodec }
                                     _ = try config.makeFormatDescription()
                                 }
                             }

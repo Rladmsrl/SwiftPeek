@@ -63,6 +63,28 @@ struct PiPDanmakuCheck {
         precondition(timeline.items.count == 1)
         print("PASS: no duplicate emission, pause/resume, seek clearing, visibility and segment changes")
 
+        // Live: a decoder reset (frameRevision) is not a seek and must not replay the backlog.
+        let live = PiPDanmakuTimeline()
+        let tall = CGSize(width: 480, height: 900)
+        var liveSnapshot = PiPDanmakuSnapshot(messages: (0..<160).map { message("旧弹幕 \($0)") }, isVisible: true, sourceID: "live")
+        live.update(liveSnapshot, size: tall, at: 0)
+        precondition(live.items.count == 5, "Opening shows only the newest few")
+        liveSnapshot.frameRevision += 1
+        live.update(liveSnapshot, size: tall, at: 0.1)
+        precondition(live.items.count == 5, "A reconnect/decoder reset must not emit old chat")
+        // Replay: seek clears, the feed is empty for a moment, then a dense first batch arrives.
+        liveSnapshot.clearToken += 1
+        liveSnapshot.messages = []
+        live.update(liveSnapshot, size: tall, at: 0.2)
+        precondition(live.items.isEmpty)
+        liveSnapshot.messages = (0..<12).map { message("拖动后 \($0)") }
+        live.update(liveSnapshot, size: tall, at: 0.3)
+        precondition(live.items.count == 12, "The first post-seek batch belongs to the new position: \(live.items.count)")
+        liveSnapshot.messages += [message("下一条")]
+        live.update(liveSnapshot, size: tall, at: 0.4)
+        precondition(live.items.count == 13, "After the first batch, only new messages are emitted")
+        print("PASS: live decoder resets keep chat; the first batch after a replay seek is shown in full")
+
         for i in 0..<2000 {
             snapshot.messages = [message("\(i)")]
             timeline.update(snapshot, size: size, at: Double(i) * 0.05 + 104)
@@ -108,6 +130,18 @@ struct PiPDanmakuCheck {
         let attachments = CMSampleBufferGetSampleAttachmentsArray(mediaSample, createIfNecessary: false) as? [[String: Any]]
         precondition(attachments?.first?[kCMSampleAttachmentKey_DisplayImmediately as String] as? Bool != true)
         print("PASS: media-clock timestamps do not conflict with DisplayImmediately")
+
+        // Large replay frames are scaled once per distinct source frame; a new frame must not reuse it.
+        let large = PiPFrameCompositor()
+        let bigA = makePixel(width: 1920, height: 1080, blue: 180)
+        let bigB = makePixel(width: 1920, height: 1080, blue: 20)
+        let first = pixels(CMSampleBufferGetImageBuffer(large.compose(bigA, overlay: nil, at: 0)!)!)
+        let again = large.compose(bigA, overlay: nil, at: 1)!
+        precondition(CVPixelBufferGetWidth(CMSampleBufferGetImageBuffer(again)!) == 960)
+        precondition(pixels(CMSampleBufferGetImageBuffer(again)!) == first, "Reusing a scaled frame keeps its pixels")
+        let other = pixels(CMSampleBufferGetImageBuffer(large.compose(bigB, overlay: nil, at: 2)!)!)
+        precondition(other != first, "A new source frame must be scaled again, not served from the cache")
+        print("PASS: large source frames scale once and never serve a stale cached frame")
 
         cadenceCheck()
         try decodeCheck(pixel, reordered: false)
@@ -231,18 +265,32 @@ struct PiPDanmakuCheck {
         print("PASS: worker animation (\(frames) frames/0.8s), backpressure, stop and stale-generation rejection")
     }
 
-    static func makePixel() -> CVPixelBuffer {
+    static func decodeOnlyCopy(_ sample: CMSampleBuffer) -> CMSampleBuffer {
+        var timing = CMSampleTimingInfo(duration: CMSampleBufferGetDuration(sample),
+                                        presentationTimeStamp: CMSampleBufferGetPresentationTimeStamp(sample),
+                                        decodeTimeStamp: CMSampleBufferGetDecodeTimeStamp(sample))
+        var copy: CMSampleBuffer?
+        precondition(CMSampleBufferCreateCopyWithNewTiming(allocator: nil, sampleBuffer: sample, sampleTimingEntryCount: 1,
+                                                           sampleTimingArray: &timing, sampleBufferOut: &copy) == noErr)
+        let attachments = CMSampleBufferGetSampleAttachmentsArray(copy!, createIfNecessary: true)!
+        let dictionary = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFMutableDictionary.self)
+        CFDictionarySetValue(dictionary, Unmanaged.passUnretained(kCMSampleAttachmentKey_DoNotDisplay).toOpaque(),
+                             Unmanaged.passUnretained(kCFBooleanTrue).toOpaque())
+        return copy!
+    }
+
+    static func makePixel(width: Int = 640, height: Int = 360, blue: UInt8 = 180) -> CVPixelBuffer {
         var pixel: CVPixelBuffer?
-        precondition(CVPixelBufferCreate(nil, 640, 360, kCVPixelFormatType_32BGRA,
+        precondition(CVPixelBufferCreate(nil, width, height, kCVPixelFormatType_32BGRA,
             [kCVPixelBufferIOSurfacePropertiesKey as String: [:], kCVPixelBufferMetalCompatibilityKey as String: true] as CFDictionary, &pixel) == kCVReturnSuccess)
         let result = pixel!
         CVPixelBufferLockBaseAddress(result, [])
         let pointer = CVPixelBufferGetBaseAddress(result)!.assumingMemoryBound(to: UInt8.self)
         let stride = CVPixelBufferGetBytesPerRow(result)
-        for y in 0..<360 {
-            for x in 0..<640 {
+        for y in 0..<height {
+            for x in 0..<width {
                 let index = y * stride + x * 4
-                pointer[index] = 180
+                pointer[index] = blue
                 pointer[index + 1] = 40
                 pointer[index + 2] = 20
                 pointer[index + 3] = 255
@@ -261,11 +309,14 @@ struct PiPDanmakuCheck {
     final class EncodedProbe: @unchecked Sendable {
         private let lock = NSLock()
         private var sample: CMSampleBuffer?
+        private var dependent: CMSampleBuffer?
         private var previousPTS = CMTime.invalid
         private var reordered = false
         func keepFirst(_ sample: CMSampleBuffer) {
             lock.lock(); defer { lock.unlock() }
             if self.sample == nil { self.sample = sample }
+            let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[CFString: Any]]
+            if dependent == nil, attachments?.first?[kCMSampleAttachmentKey_NotSync] as? Bool == true { dependent = sample }
             let pts = CMSampleBufferGetPresentationTimeStamp(sample)
             if previousPTS.isValid, pts < previousPTS { reordered = true }
             previousPTS = pts
@@ -273,6 +324,10 @@ struct PiPDanmakuCheck {
         var first: CMSampleBuffer? {
             lock.lock(); defer { lock.unlock() }
             return sample
+        }
+        var nonSync: CMSampleBuffer? {
+            lock.lock(); defer { lock.unlock() }
+            return dependent
         }
         var hasReorderedFrames: Bool {
             lock.lock(); defer { lock.unlock() }
@@ -320,12 +375,19 @@ struct PiPDanmakuCheck {
         precondition(frame != nil, "Real H.264 decode must yield frames selected on the playback clock")
         precondition(CVPixelBufferGetWidth(frame!) <= 480)
         precondition(source.frame(at: CMTime(seconds: -1, preferredTimescale: 600)) == nil, "Do not display future frames")
+        let beforeOverlap = source.revision
+        source.append(decodeOnlyCopy(encoded.first!))
+        precondition(source.revision == beforeOverlap,
+                     "Splice overlap on the old timeline (decode-only) must not reset the PiP decoder")
         let oldRevision = source.revision
         source.reset(streamGeneration: 7)
         precondition(source.revision != oldRevision && source.frame(at: .zero) == nil,
                      "A restart must clear both decoder state and retained frames")
         source.append(encoded.first!, generation: 0)
         precondition(source.frame(at: .zero) == nil, "Late compressed input from an old stream must be rejected")
+        source.append(encoded.nonSync!, generation: 7)
+        precondition(source.frame(at: CMTime(seconds: 10, preferredTimescale: 600)) == nil,
+                     "After a reset, decoding must wait for a keyframe")
         source.append(encoded.first!, generation: 7)
         precondition(source.frame(at: .zero) != nil, "The same codec/PTS must decode normally in a new stream generation")
         source.setEnabled(false)
@@ -401,7 +463,8 @@ struct PiPDanmakuCheck {
                      == painted.suffix(CVPixelBufferGetBytesPerRow(pixel) * 100), "Overlay must preserve the video below it")
 
         snapshot.isPaused = true
-        _ = renderer.image(snapshot: snapshot, size: size, at: 2)
+        precondition(renderer.image(snapshot: snapshot, size: size, at: 2) != nil,
+                     "Pausing must not blank the overlay for a frame")
         queue.sync {}
         let frozen = renderer.image(snapshot: snapshot, size: size, at: 100)!
         queue.sync {}
