@@ -22,12 +22,14 @@ extension View {
 // MARK: - 录像列表
 
 struct ReplayListView: View {
-    @State private var store: ReplayListStore
+    let roomID: String
+    @State private var storeBox = LazyViewObject<ReplayListStore>()
+    private var store: ReplayListStore { storeBox { ReplayListStore(roomID: roomID) } }
     @State private var progress = ReplayProgressStore.shared
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     init(roomID: String) {
-        _store = State(initialValue: ReplayListStore(roomID: roomID))
+        self.roomID = roomID
     }
 
     var body: some View {
@@ -121,10 +123,35 @@ private enum ReplayPanel: String, CaseIterable, Identifiable {
     var id: Self { self }
 }
 
+/// 录像页参与单画面前台归属：被其他页面接管时暂停并记住，重新接管时续播。
+@MainActor
+private final class ReplayForegroundClaim: ForegroundPlaybackParticipant {
+    weak var player: ReplayPlayer?
+    private(set) var resumeOnReturn = false
+
+    func foregroundPlaybackChanged(owned: Bool) {
+        guard let player else { return }
+        if owned {
+            guard resumeOnReturn else { return }
+            resumeOnReturn = false
+            player.play()
+        } else {
+            resumeOnReturn = player.isPlaying || player.state == .loading
+            if resumeOnReturn { player.pause() }
+        }
+    }
+}
+
 struct ReplayView: View {
     let route: ReplayRoute
 
-    @State private var session = ReplaySession()
+    // 会话（AVPlayer、时间观察、画中画合成）只在第一次用到时创建；离开页面关闭后，返回时换新的
+    @State private var sessionBox = LazyViewObject<ReplaySession>()
+    private var session: ReplaySession { sessionBox { ReplaySession() } }
+    @State private var foreground = ReplayForegroundClaim()
+    /// 真正离开时记下正在看的分段，返回本页时从保存的进度继续（保持暂停）
+    private struct ClosedReplay { let hashID: String? }
+    @State private var closedReplay: ClosedReplay?
     @State private var list: ReplayListStore?
     @State private var progress = ReplayProgressStore.shared
     @State private var panel: ReplayPanel = .danmaku
@@ -143,7 +170,6 @@ struct ReplayView: View {
 
     init(route: ReplayRoute) {
         self.route = route
-        _list = State(initialValue: route.roomID.map { ReplayListStore(roomID: $0) })
     }
 
     private var player: ReplayPlayer { session.player }
@@ -188,11 +214,15 @@ struct ReplayView: View {
         .onDisappear {
             hideTask?.cancel()
             if MobilePlaybackInterruption.shared.isActive { return }
-            // 切 Tab 只是被盖住，不打断播放；真正离开时暂停并记住进度
-            let isTabSwitch = homeTab != nil && router.selectedTab != homeTab
-            guard !isTabSwitch, !player.isPiPActive else { return }
+            // 全屏时没有 Tab 栏，只有深链会切走页面；无论是否切 Tab 都要恢复方向
             if isFullscreen { exitFullscreen() }
-            player.pause()
+            // 切 Tab 只是被盖住，不打断播放（别的页面接管前台时会暂停这里）
+            let isTabSwitch = homeTab != nil && router.selectedTab != homeTab
+            guard !isTabSwitch else { return }
+            // 真正离开（返回、或推入直播间）：和直播一样结束画中画，保存进度与音量，停掉弹幕加载
+            ForegroundPlayback.shared.release(foreground)
+            closedReplay = ClosedReplay(hashID: session.hashID)
+            session.close()
         }
         .onChange(of: detail?.roomID) { _, id in
             guard list == nil, let id, !id.isEmpty else { return }
@@ -211,19 +241,43 @@ struct ReplayView: View {
             player.setBackgrounded(scenePhase == .background, keepAudio: enabled)
         }
         .onChange(of: player.isPlaying) { _, playing in
-            if playing { scheduleHide() } else { controlsVisible = true }
+            if playing {
+                // 开始播放即接管前台，其他直播间 / 录像页暂停
+                ForegroundPlayback.shared.claim(foreground)
+                scheduleHide()
+            } else { controlsVisible = true }
         }
         .onChange(of: settings.data.autoPictureInPicture) { player.preparePiP(automatic: settings.data.autoPictureInPicture) }
     }
 
     private func start() {
         if homeTab == nil { homeTab = router.selectedTab }
-        guard !started else { return }
+        let reopening = closedReplay
+        if reopening != nil {
+            closedReplay = nil
+            sessionBox.reset()
+            started = false
+        }
+        foreground.player = session.player
+        guard !started else {
+            // 切 Tab 回来：之前被别的页面接管而暂停的，在这里接管回来续播
+            if foreground.resumeOnReturn { ForegroundPlayback.shared.claim(foreground) }
+            return
+        }
         started = true
         session.configure(settings: settings)
         player.setBackgrounded(scenePhase == .background, keepAudio: settings.data.backgroundAudio)
-        if let hashID = route.hashID { session.open(hashID: hashID, start: route.start) }
-        if let list { Task { await list.refresh() } }
+        if let reopening {
+            if let hashID = reopening.hashID { session.open(hashID: hashID, autoplay: false) }
+        } else if let hashID = route.hashID {
+            ForegroundPlayback.shared.claim(foreground)
+            session.open(hashID: hashID, start: route.start)
+        }
+        if list == nil, let roomID = route.roomID {
+            let store = ReplayListStore(roomID: roomID)
+            list = store
+            Task { await store.refresh() }
+        }
     }
 
     // MARK: 播放区

@@ -19,9 +19,12 @@ final class ReplayPlayer {
     let player = AVPlayer()
     let playerLayer = AVPlayerLayer()
 
-    private(set) var state: State = .idle
+    /// With a sample-buffer PiP source (composited chat), AVKit only re-asks for the
+    /// paused state when told to; segment end, interruptions or a route change would
+    /// otherwise leave the PiP button showing the old state.
+    private(set) var state: State = .idle { didSet { if state != oldValue { pipPlaybackStateChanged() } } }
     private(set) var currentTime: TimeInterval = 0
-    private(set) var duration: TimeInterval = 0
+    private(set) var duration: TimeInterval = 0 { didSet { if duration != oldValue { pipPlaybackStateChanged() } } }
     private(set) var bufferedTime: TimeInterval = 0
     private(set) var videoSize: CGSize?
     private(set) var isPiPActive = false {
@@ -52,12 +55,13 @@ final class ReplayPlayer {
     private var itemGeneration = 0
     private var seekGeneration = 0
     private var seekTarget: TimeInterval?
-    private var timeObserver: Any?
-    private var itemObservations: [NSKeyValueObservation] = []
-    private var playerObservations: [NSKeyValueObservation] = []
-    private var notificationTokens: [any NSObjectProtocol] = []
-    private var pip: AVPictureInPictureController?
-    private var pipDelegate: ReplayPiPDelegate?
+    // Plumbing below is never shown in UI; ignored so deinit can release it safely.
+    @ObservationIgnored private var timeObserver: Any?
+    @ObservationIgnored private var itemObservations: [NSKeyValueObservation] = []
+    @ObservationIgnored private var playerObservations: [NSKeyValueObservation] = []
+    @ObservationIgnored private var notificationTokens: [any NSObjectProtocol] = []
+    @ObservationIgnored private var pip: AVPictureInPictureController?
+    @ObservationIgnored private var pipDelegate: ReplayPiPDelegate?
     var danmakuSnapshot: (() -> PiPDanmakuSnapshot)?
     private var pipSettings: AppSettings?
     #if os(macOS)
@@ -66,13 +70,15 @@ final class ReplayPlayer {
     #else
     private let composite = PiPCompositeSource()
     private let preference = PiPDanmakuPreference()
-    private var videoOutput: AVPlayerItemVideoOutput?
+    @ObservationIgnored private var videoOutput: AVPlayerItemVideoOutput?
+    /// Whether AVKit mirrors the composite layer; avoid redundant contentSource swaps.
+    @ObservationIgnored private var showsComposite = false
     #endif
-    private var isShutDown = false
+    @ObservationIgnored private var isShutDown = false
     private var sceneBackgrounded = false
     private var backgroundAudioAllowed = true
     private var resumeAfterBackground = false
-    private var backgroundTask: Task<Void, Never>?
+    @ObservationIgnored private var backgroundTask: Task<Void, Never>?
     private let audioSessionOwner = UUID()
     @ObservationIgnored private var interruptionToken: UUID?
     private var interrupted = false
@@ -109,14 +115,24 @@ final class ReplayPlayer {
     }
 
     var isPlaying: Bool { state == .playing || state == .buffering }
-    deinit {
-        #if os(iOS)
-        let token = interruptionToken
-        let owner = audioSessionOwner
-        Task { @MainActor in
-            MobilePlaybackInterruption.shared.remove(token)
-            PlaybackAudioSession.shared.release(owner)
-        }
+
+    /// 兜底：持有者没走 shutdown() 就被释放时，至少移除 AVPlayer 的时间监听与通知、
+    /// 收起画中画并归还音频会话。只做收尾，不改动可观察状态。
+    isolated deinit {
+        backgroundTask?.cancel()
+        guard !isShutDown else { return }
+        pip?.delegate = nil
+        pip?.stopPictureInPicture()
+        player.pause()
+        if let timeObserver { player.removeTimeObserver(timeObserver) }
+        notificationTokens.forEach { NotificationCenter.default.removeObserver($0) }
+        #if os(macOS)
+        floating.stop()
+        #else
+        composite.stop()
+        preference.stop()
+        MobilePlaybackInterruption.shared.remove(interruptionToken)
+        PlaybackAudioSession.shared.release(audioSessionOwner)
         #endif
     }
     /// 拖动进度条时显示目标位置，而不是播放器回报的旧位置
@@ -310,7 +326,7 @@ final class ReplayPlayer {
         #if os(iOS)
         // Return to the system player layer while the new item gets ready.
         // The compositor must not keep painting the preceding item's last frame.
-        if isPiPActive { pip?.contentSource = AVPictureInPictureController.ContentSource(playerLayer: playerLayer) }
+        showPlayerLayer()
         stopComposite()
         #endif
         itemObservations.removeAll()
@@ -335,6 +351,7 @@ final class ReplayPlayer {
         floating.stop()
         #else
         stopComposite()
+        showsComposite = false
         preference.stop()
         #endif
         danmakuSnapshot = nil
@@ -427,7 +444,7 @@ final class ReplayPlayer {
                 self.isPiPActive = active
                 if active { self.refreshPiPDanmaku() }
                 else {
-                    self.pip?.contentSource = AVPictureInPictureController.ContentSource(playerLayer: self.playerLayer)
+                    self.showPlayerLayer()
                     self.stopComposite()
                 }
             }
@@ -460,19 +477,43 @@ final class ReplayPlayer {
         #endif
     }
 
+    /// Chat visibility affects whether PiP needs the composite path at all.
+    func danmakuVisibilityChanged() {
+        #if os(iOS)
+        refreshPiPDanmaku()
+        #endif
+    }
+
+    private func pipPlaybackStateChanged() {
+        #if os(iOS)
+        if isPiPActive { pip?.invalidatePlaybackState() }
+        #endif
+    }
+
     #if os(iOS)
     func refreshPiPDanmaku() {
-        guard isPiPActive, let pip else { return }
-        guard pipSettings?.data.pictureInPictureDanmaku == true, let item = player.currentItem else {
-            pip.contentSource = AVPictureInPictureController.ContentSource(playerLayer: playerLayer)
+        guard isPiPActive, pip != nil else { return }
+        // Hidden chat (setting off, or toggled off in the player) keeps the native
+        // AVPlayerLayer PiP; the 60 Hz CPU composite only runs when text is drawn.
+        guard danmakuSnapshot?().isVisible == true, let item = player.currentItem else {
+            showPlayerLayer()
             stopComposite()
             return
         }
         if videoOutput == nil {
-            let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [
+            var attributes: [String: Any] = [
                 kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
                 kCVPixelBufferMetalCompatibilityKey as String: true,
-            ])
+            ]
+            // Ask the decoder for the composite size (≤960 px) instead of scaling
+            // full 1080p/1440p frames on the CPU.
+            let size = item.presentationSize
+            if size.width > 0, size.height > 0 {
+                let scale = min(1, 960 / max(size.width, size.height))
+                attributes[kCVPixelBufferWidthKey as String] = Int(max(2, floor(size.width * scale / 2) * 2))
+                attributes[kCVPixelBufferHeightKey as String] = Int(max(2, floor(size.height * scale / 2) * 2))
+            }
+            let output = AVPlayerItemVideoOutput(pixelBufferAttributes: attributes)
             item.add(output)
             videoOutput = output
         }
@@ -487,11 +528,18 @@ final class ReplayPlayer {
             return (self.player.currentTime(), self.player.rate)
         }
         composite.onReady = { [weak self] in
-            guard let self, let delegate = self.pipDelegate, self.isPiPActive else { return }
+            guard let self, let delegate = self.pipDelegate, self.isPiPActive, !self.showsComposite else { return }
             self.pip?.contentSource = AVPictureInPictureController.ContentSource(
                 sampleBufferDisplayLayer: self.composite.layer, playbackDelegate: delegate)
+            self.showsComposite = true
         }
         composite.start()
+    }
+
+    private func showPlayerLayer() {
+        guard showsComposite else { return }
+        showsComposite = false
+        pip?.contentSource = AVPictureInPictureController.ContentSource(playerLayer: playerLayer)
     }
 
     private func stopComposite() {

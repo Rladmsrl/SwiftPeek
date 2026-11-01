@@ -5,9 +5,9 @@
 
 ## 下载与安装
 
-当前版本 **0.8.5 (19)**：[下载 Universal ZIP](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.5-macos/SwiftPeek-0.8.5-macOS-universal.zip)，解压后将 SwiftPeek.app 拖入“应用程序”。同一包包含 Apple Silicon arm64 和 Intel x86_64，最低 macOS 26。Intel 与 macOS 26 真机播放尚未验证。
+当前版本 **0.8.6 (20)**：[下载 Universal ZIP](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.6-macos/SwiftPeek-0.8.6-macOS-universal.zip)，解压后将 SwiftPeek.app 拖入“应用程序”。同一包包含 Apple Silicon arm64 和 Intel x86_64，最低 macOS 26。Intel 与 macOS 26 真机播放尚未验证。
 
-包采用 ad-hoc 签名，未做 Developer ID 公证。核对[发布页](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.5-macos)的来源与 SHA-256 后，如被系统阻止，可按提示在“系统设置 → 隐私与安全性”允许该应用。包内隐私检查通过不代表完整安全保证，详见[隐私说明](../PRIVACY.md)。
+包采用 ad-hoc 签名，未做 Developer ID 公证。核对[发布页](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.6-macos)的来源与 SHA-256 后，如被系统阻止，可按提示在“系统设置 → 隐私与安全性”允许该应用。包内隐私检查通过不代表完整安全保证，详见[隐私说明](../PRIVACY.md)。
 
 ## 打开与构建
 
@@ -55,7 +55,7 @@
 用于导航、筛选、搜索和播放控制。内容卡片保留稳定底色，避免长文和封面被玻璃折射干扰。
 参考：[Apple — Applying Liquid Glass to custom views](https://developer.apple.com/documentation/swiftui/applying-liquid-glass-to-custom-views)。
 
-快捷键：`⌘F` 搜索，`⌘0` 返回主窗口，直播窗口内 `空格` 播放 / 停止、`M` 静音、`⌃⌘F` 全屏。
+快捷键：`⌘F` 搜索，`⌘0` 返回主窗口，直播窗口内 `空格` 播放 / 停止、`M` 静音、`D` 显示 / 隐藏弹幕、`⌃⌘F` 全屏；快捷键不依赖鼠标是否停在画面上。
 直播无可恢复的暂停缓冲；再次播放会重新加载直播地址。
 关闭直播窗口结束该窗口的会话；浏览主窗口不会打断直播。
 启动时只展示主窗口，直播间不参与系统窗口恢复。关闭最后一个窗口也不会主动退出应用。

@@ -162,6 +162,10 @@ final class FLVLivePlayer {
         /// 同理，不超过该时间戳的音频直接丢弃
         var dropAudioThrough: UInt32?
         var consecutiveAudioDrops = 0
+        /// 渲染器失败后刷掉了参考帧：下一个关键帧之前的视频都解不出来，直接丢弃
+        var needsSyncSample = false
+        /// 同一连接内时间戳大幅回退（推流端重启）：等下一个关键帧，在它上面重新建立时间映射
+        var awaitingRebase = false
 
         func resetAudioTimeline() {
             audioTimelineAnchor = nil
@@ -190,6 +194,10 @@ final class FLVLivePlayer {
     }
 
     private static let timescale: CMTimeScale = 1000
+    /// Generated audio time may differ from the container by rounding, never by this much.
+    static let audioDriftTolerance: TimeInterval = 0.05
+    /// A DTS step further back than this on one connection is a new timeline, not jitter.
+    static let timelineRestartMS: Int64 = 1000
 
     init() {
         displayLayer.videoGravity = .resizeAspect
@@ -668,6 +676,9 @@ final class FLVLivePlayer {
         var presented: State?
         var network = NetworkPathMonitor.shared.snapshot()
         var networkRenewal = false
+        /// Tags from the active source keep failing to decode: replace it rather than end playback.
+        var consecutiveTagErrors = 0
+        var brokenSource = false
         defer {
             sources.cancelAll()
             preparation?.cancel()
@@ -695,7 +706,7 @@ final class FLVLivePlayer {
                 LiveDiagnostics.record("buffer.sourceEnded", fields: ["player": diagnosticID,
                     "bufferSeconds": String(snapshot.seconds), "error": lastError])
                 if let error = snapshot.error, case .giveUp(let reason) = classify(error) {
-                    await setState(.failed(reason), generation: generation)
+                    await failBuffered(reason, generation: generation)
                     return
                 }
             }
@@ -730,6 +741,8 @@ final class FLVLivePlayer {
                         source = replacement.source
                         initialized = true
                         terminalObserved = false
+                        consecutiveTagErrors = 0
+                        brokenSource = false
                         snapshot = next
                         stableSince = now
                         policy.committed()
@@ -763,7 +776,7 @@ final class FLVLivePlayer {
             let lastReceived = source.lastReceivedAt
             let idleLimit = lastReceived == nil ? LiveJitterPolicy.connectTimeout : LiveJitterPolicy.receiveStallTimeout
             let silent = !snapshot.ended && !snapshot.capacityLimited && now - (lastReceived ?? source.startedAt) > idleLimit
-            let stalled = silent || now - lastDelivery > 12
+            let stalled = silent || brokenSource || now - lastDelivery > 12
             let healthy = refill == nil && snapshot.seconds >= LiveJitterPolicy.healthyRenewalSeconds
             if preparation == nil, network.satisfied,
                policy.begin(now: now, sourceAge: now - source.startedAt, ended: snapshot.ended,
@@ -775,7 +788,8 @@ final class FLVLivePlayer {
                 // A dead source has no reserve worth protecting. A healthy one is replaced
                 // only by a source holding at least as much as it does now.
                 let minimumSeconds = recovering ? 0.5 : min(LiveTagBuffer.targetSeconds, max(1, snapshot.seconds))
-                let reason = networkRenewal ? "network" : snapshot.ended ? "ended" : silent ? "silent" : stalled ? "stalled" : "renewal"
+                let reason = networkRenewal ? "network" : snapshot.ended ? "ended" : silent ? "silent"
+                    : brokenSource ? "decode" : stalled ? "stalled" : "renewal"
                 preparationRecovers = recovering || networkRenewal
                 preparationNetwork = network.generation
                 networkRenewal = false
@@ -814,7 +828,8 @@ final class FLVLivePlayer {
                             if ProcessInfo.processInfo.systemUptime - fresh.startedAt > LiveHandoffPolicy.preparationTimeout {
                                 throw URLError(.timedOut)
                             }
-                            try await Task.sleep(for: .milliseconds(20))
+                            // Readiness is measured in seconds of media; a coarse check costs nothing.
+                            try await Task.sleep(for: .milliseconds(100))
                         }
                     } catch {
                         guard !Task.isCancelled, self.isCurrent(generation) else { return }
@@ -829,7 +844,8 @@ final class FLVLivePlayer {
                 LiveDiagnostics.record("buffer.start", fields: ["player": diagnosticID,
                     "bufferSeconds": String(snapshot.seconds), "waited": String(now - source.startedAt)])
             }
-            if let hold = refill, LiveJitterPolicy.shouldResume(seconds: snapshot.seconds, target: hold.target, ready: snapshot.ready,
+            if let hold = refill, LiveJitterPolicy.shouldResume(seconds: snapshot.seconds, target: hold.target,
+                                                                capacityLimited: snapshot.capacityLimited,
                                                                 count: snapshot.count, ended: snapshot.ended, waited: now - hold.since) {
                 refill = nil
                 presented = nil
@@ -846,9 +862,27 @@ final class FLVLivePlayer {
                     }
                     try await handle(tag, context: context, generation: generation)
                     lastDelivery = ProcessInfo.processInfo.systemUptime
+                    consecutiveTagErrors = 0
                 } catch {
-                    if isCurrent(generation) { await setState(.failed(error.localizedDescription), generation: generation) }
-                    return
+                    guard isCurrent(generation) else { return }
+                    // One malformed tag must not discard seconds of good buffered media.
+                    // Only an unsupported stream is final; anything else drops the tag, and
+                    // a source that keeps failing is replaced like a dead connection.
+                    switch classify(error) {
+                    case .cancelled:
+                        return
+                    case .giveUp(let reason):
+                        await failBuffered(reason, generation: generation)
+                        return
+                    case .retrySameURL(let reason), .needFreshURL(let reason):
+                        if tag.type == .video { context.needsSyncSample = true }
+                        consecutiveTagErrors += 1
+                        lastError = reason
+                        if consecutiveTagErrors == Self.brokenSourceTagErrors {
+                            brokenSource = true
+                            LiveDiagnostics.record("buffer.decodeFailed", fields: ["player": diagnosticID, "error": reason])
+                        }
+                    }
                 }
             } else {
                 if context.didStartClock, refill == nil,
@@ -872,13 +906,20 @@ final class FLVLivePlayer {
                         await setState(desired, generation: generation)
                     }
                 }
-                if policy.exhausted, preparation == nil, network.satisfied, snapshot.count == 0,
+                if policy.exhausted(at: now), preparation == nil, network.satisfied, snapshot.count == 0,
                    !context.didStartClock || context.clockNeedsResume,
                    snapshot.ended || now - lastDelivery > 20 {
-                    await setState(.failed("\(lastError)，刷新多次仍未成功"), generation: generation)
+                    await failBuffered("\(lastError)，刷新多次仍未成功", generation: generation)
                     return
                 }
-                do { try await Task.sleep(for: .milliseconds(10)) } catch { return }
+                if initialized, refill == nil, !snapshot.ended {
+                    // Playing at the live edge: wake as soon as the next tag arrives.
+                    await source.buffer.waitForTag(timeout: .milliseconds(100))
+                } else {
+                    // Startup, refill and offline waits are measured in seconds.
+                    do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
+                }
+                guard !Task.isCancelled else { return }
             }
             if now - lastReport >= 1 {
                 lastReport = now
@@ -923,6 +964,17 @@ final class FLVLivePlayer {
         onSustainedUnderrun?()
     }
 
+    /// Consecutive undecodable tags after which the active source is replaced.
+    private static let brokenSourceTagErrors = 30
+
+    /// Buffered playback ended for good: show why and give the audio session back.
+    @MainActor
+    private func failBuffered(_ reason: String, generation: UInt64) {
+        guard isCurrent(generation) else { return }
+        state = .failed(reason)
+        deactivateAudioSession()
+    }
+
     @MainActor
     private func reportBuffer(_ snapshot: LiveTagBuffer.Snapshot, renewing: Bool, generation: UInt64) {
         guard isCurrent(generation) else { return }
@@ -953,8 +1005,11 @@ final class FLVLivePlayer {
 
     private func handleVideo(_ tag: FLVTag, context: DecodeContext, generation: UInt64) async throws {
         guard let video = FLVVideoTag(payload: tag.payload) else {
-            // 非 H.264（例如 HEVC）在此被识别
-            throw LivePlayerError.unsupportedCodec
+            // 非 H.264（例如 HEVC）在此被识别；截断或未知包类型的 H.264 tag 只丢这一个
+            if let header = FLVVideoTag.Header(payload: tag.payload), !header.isAVC {
+                throw LivePlayerError.unsupportedCodec
+            }
+            return
         }
 
         switch video.packet {
@@ -968,7 +1023,8 @@ final class FLVLivePlayer {
             await setVideoSize(CGSize(width: Int(dimensions.width), height: Int(dimensions.height)), generation: generation)
 
         case .nalus(let avcc):
-            guard let format = context.videoFormat else { return }
+            // 空帧（只有 5 字节头）CoreMedia 封装不了，跳过即可
+            guard let format = context.videoFormat, !avcc.isEmpty else { return }
             // 必须从关键帧起播，否则首屏是花屏。
             // 时间基准也得落在这个关键帧上：前面的音频帧 / P 帧会被丢掉，
             // 若用它们当基准，关键帧的 PTS 会落在时钟的「未来」，画面要空等一个 GOP。
@@ -982,6 +1038,19 @@ final class FLVLivePlayer {
             // 续接同源新连接：旧连接已播过的帧只用来建立解码参考
             let decodeOnly = context.decodeOnlyThrough.map { tag.timestamp <= $0 } ?? false
             if !decodeOnly { context.decodeOnlyThrough = nil }
+            // 同一连接里 DTS 大幅回退说明时间轴重开了（推流端重连而 CDN 保留了连接）。
+            // 不处理的话新帧全落在过去，画面冻住。续接的重叠帧本来就会回退，不算；
+            // B 帧只影响 PTS，DTS 单调，也不会误触发。
+            if !decodeOnly, let last = context.lastVideoTimestamp,
+               Int64(tag.timestamp) < Int64(last) - Self.timelineRestartMS {
+                context.awaitingRebase = true
+                LiveDiagnostics.record("player.timelineRestart", fields: ["player": diagnosticID,
+                    "stepMS": String(Int64(tag.timestamp) - Int64(last))])
+            }
+            if context.awaitingRebase {
+                guard video.isKeyframe else { context.lastVideoTimestamp = tag.timestamp; return }
+                await rebaseTimeline(at: tag.timestamp, context: context, generation: generation)
+            }
             let dts = relativeTime(tag.timestamp, context: context)
             let pts = relativeTime(tag.timestamp, offsetMS: video.compositionTimeOffset, context: context)
             let sample = try makeSampleBuffer(
@@ -993,11 +1062,23 @@ final class FLVLivePlayer {
                 decodeOnly: decodeOnly
             )
             context.lastVideoTimestamp = tag.timestamp
-            await enqueueVideo(sample, displayable: !decodeOnly, context: context, generation: generation)
+            await enqueueVideo(sample, isKeyframe: video.isKeyframe, displayable: !decodeOnly, context: context, generation: generation)
 
         case .end:
             break
         }
+    }
+
+    /// 在新时间轴的关键帧上重建映射：接在已排队媒体之后，时钟不归零、画面不黑屏。
+    private func rebaseTimeline(at timestamp: UInt32, context: DecodeContext, generation: UInt64) async {
+        context.timeOffset = await handoffOffset(after: context.lastQueuedEnd, generation: generation)
+        context.timestampBase = timestamp
+        context.decodeOnlyThrough = nil
+        context.dropAudioThrough = nil
+        context.resetAudioTimeline()
+        context.lastVideoTimestamp = nil
+        context.lastAudioTimestamp = nil
+        context.awaitingRebase = false
     }
 
     private func handleAudio(_ tag: FLVTag, context: DecodeContext, generation: UInt64) async throws {
@@ -1014,11 +1095,16 @@ final class FLVLivePlayer {
             context.audioFormat = try parsed.makeFormatDescription()
 
         case .raw(let frame):
-            guard let format = context.audioFormat, context.didReceiveKeyframe else { return }
+            guard let format = context.audioFormat, context.didReceiveKeyframe, !frame.isEmpty else { return }
             if let through = context.dropAudioThrough {
                 if tag.timestamp <= through { return }
                 context.dropAudioThrough = nil
             }
+            // 时间轴重开：等视频在新关键帧上重建映射，旧基准下的音频会全挤到 0 点
+            if let last = context.lastAudioTimestamp, Int64(tag.timestamp) < Int64(last) - Self.timelineRestartMS {
+                context.awaitingRebase = true
+            }
+            if context.awaitingRebase { context.lastAudioTimestamp = tag.timestamp; return }
             context.lastAudioTimestamp = tag.timestamp
             let pts = audioPresentationTime(containerTimestamp: tag.timestamp, context: context)
             let sample = try makeAudioSampleBuffer(data: frame, format: format, pts: pts, sampleRate: context.audioSampleRate)
@@ -1028,25 +1114,21 @@ final class FLVLivePlayer {
 
     /// 生成与帧长严格首尾相接的音频 PTS。
     ///
-    /// 容器时间戳只在两处参与：第一帧用它和视频对齐，之后若相邻两帧的容器时间
-    /// 突然跳变（向前超过 200ms 或向后超过 50ms）才重新锚定。正常的 ±1ms 取整
-    /// 误差留在容器时间上，不写进渲染器。
+    /// 容器时间戳只在两处参与：第一帧用它和视频对齐，之后若生成的时间与容器时间
+    /// 偏离超过 `audioDriftTolerance` 才重新锚定。正常的 ±1ms 取整误差留在容器时间上，
+    /// 不写进渲染器；而几十毫秒的空档（推流丢包、续接时的小缺口）不再被节拍吸收，
+    /// 否则声音会一直比画面早这么多。
     private func audioPresentationTime(containerTimestamp: UInt32, context: DecodeContext) -> CMTime {
         let container = relativeTime(containerTimestamp, context: context)
-        if let last = context.lastAudioContainerPTS {
-            let step = CMTimeSubtract(container, last).seconds
-            if step < -0.05 || step > 0.2 {
-                context.audioTimelineAnchor = nil
-                context.audioFramesQueued = 0
-            }
-        }
         context.lastAudioContainerPTS = container
 
         let scale = CMTimeScale(context.audioSampleRate)
         if let anchor = context.audioTimelineAnchor {
             let pts = CMTimeAdd(anchor, CMTime(value: context.audioFramesQueued * 1024, timescale: scale))
-            context.audioFramesQueued += 1
-            return pts
+            if abs(CMTimeSubtract(pts, container).seconds) <= Self.audioDriftTolerance {
+                context.audioFramesQueued += 1
+                return pts
+            }
         }
         context.audioTimelineAnchor = container
         context.audioFramesQueued = 1
@@ -1194,17 +1276,30 @@ final class FLVLivePlayer {
 
     // MARK: - 入队与背压
 
-    private func enqueueVideo(_ sample: CMSampleBuffer, displayable: Bool = true, context: DecodeContext, generation: UInt64) async {
+    private func enqueueVideo(_ sample: CMSampleBuffer, isKeyframe: Bool, displayable: Bool = true,
+                              context: DecodeContext, generation: UInt64) async {
         guard isCurrent(generation) else { return }
         let renderer = videoRenderer
-        generationGate.withCurrent(generation) {
-            if renderer.status == .failed { renderer.flush() }
+        // 解码器被系统收回（后台、资源不足）时渲染器进入 failed，flush 后参考帧都没了。
+        // 下一个关键帧之前的帧解不出来，送进去只会花屏或继续失败。
+        let flushed = generationGate.withCurrent(generation) { () -> Bool in
+            guard renderer.status == .failed else { return false }
+            renderer.flush()
+            return true
+        } ?? false
+        if flushed {
+            context.needsSyncSample = true
+            LiveDiagnostics.record("player.rendererFlushed", fields: ["player": diagnosticID])
+        }
+        if context.needsSyncSample {
+            guard isKeyframe else { return }
+            context.needsSyncSample = false
         }
         await waitForRoom(renderer, generation: generation)
         guard isCurrent(generation) else { return }
         if !renderer.isReadyForMoreMediaData, synchronizer.rate == 0 {
             await startClockIfNeeded(context: context, generation: generation)
-            await waitForRoom(renderer, generation: generation, limit: 50)
+            await waitForRoom(renderer, generation: generation, limit: .milliseconds(500))
         }
         guard isCurrent(generation) else { return }
         let enqueued = generationGate.withCurrent(generation) {
@@ -1239,7 +1334,7 @@ final class FLVLivePlayer {
         guard isCurrent(generation) else { return }
         if !audioRenderer.isReadyForMoreMediaData, synchronizer.rate == 0 {
             await startClockIfNeeded(context: context, generation: generation)
-            await waitForRoom(audioRenderer, generation: generation, limit: 50)
+            await waitForRoom(audioRenderer, generation: generation, limit: .milliseconds(500))
         }
         guard isCurrent(generation) else { return }
         generationGate.withCurrent(generation) {
@@ -1262,11 +1357,13 @@ final class FLVLivePlayer {
         }
     }
 
-    private func waitForRoom(_ renderer: any AVQueuedSampleBufferRendering, generation: UInt64, limit: Int = 150) async {
-        var spins = 0
-        while isCurrent(generation), !renderer.isReadyForMoreMediaData, spins < limit {
-            do { try await Task.sleep(for: .milliseconds(10)) } catch { return }
-            spins += 1
+    /// The renderer is only "not ready" while it already holds a full queue, so a
+    /// 20 ms check cannot starve it; this is the steady state of every playing room.
+    private func waitForRoom(_ renderer: any AVQueuedSampleBufferRendering, generation: UInt64,
+                             limit: Duration = .milliseconds(1500)) async {
+        let deadline = ContinuousClock.now + limit
+        while isCurrent(generation), !renderer.isReadyForMoreMediaData, ContinuousClock.now < deadline {
+            do { try await Task.sleep(for: .milliseconds(20)) } catch { return }
         }
     }
 
@@ -1288,6 +1385,8 @@ final class FLVLivePlayer {
         context.lastQueuedEnd = .zero
         context.decodeOnlyThrough = nil
         context.dropAudioThrough = nil
+        context.needsSyncSample = false
+        context.awaitingRebase = false
         context.resetAudioTimeline()
         resyncCount += 1
     }

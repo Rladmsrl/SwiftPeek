@@ -76,3 +76,32 @@ final class MobilePlaybackInterruption {
         for callback in Array(callbacks.values) { callback(active) }
     }
 }
+
+/// 单画面播放（直播间、录像页）的前台归属。
+@MainActor
+protocol ForegroundPlaybackParticipant: AnyObject {
+    /// `false`：让出播放，暂停并记住是否需要续播；`true`：重新拿到播放，按记住的意图续播。
+    func foregroundPlaybackChanged(owned: Bool)
+}
+
+/// 同一时间只有一个单画面页面在播。切 Tab 不停播，但后打开、重新出现或用户点了播放的
+/// 页面会接管，之前的页面暂停；回到那个页面时它再接管回来，不重新加载房间。
+/// 多画面由 `MobilePlaybackInterruption` 单独管理，两者叠加。
+@MainActor
+final class ForegroundPlayback {
+    static let shared = ForegroundPlayback()
+    private(set) weak var owner: (any ForegroundPlaybackParticipant)?
+
+    func claim(_ participant: any ForegroundPlaybackParticipant) {
+        guard owner !== participant else { return }
+        let previous = owner
+        owner = participant
+        previous?.foregroundPlaybackChanged(owned: false)
+        participant.foregroundPlaybackChanged(owned: true)
+    }
+
+    /// 页面真正关闭时调用。被让出的其他页面不会因此自动恢复，等它们自己的页面出现再接管。
+    func release(_ participant: any ForegroundPlaybackParticipant) {
+        if owner === participant { owner = nil }
+    }
+}

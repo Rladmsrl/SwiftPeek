@@ -26,9 +26,18 @@ final class RoomStatusConfirmations {
     }
 
     private var confirmations: [String: Confirmation] = [:]
-    @ObservationIgnored private var inFlight: Set<String> = []
+    /// 每个房间最多一个进行中的确认，所有卡片共同等待它。
+    /// 原先用集合占位：滑走的卡片取消后仍占着房间号，滑回来的新卡片直接返回，
+    /// 而旧请求拿到名额时已取消、什么也不查，这张卡就一直停在待确认、看起来像在直播。
+    private struct Pending {
+        let token: Int
+        let task: Task<Void, Never>
+        var waiters: Int
+    }
+    @ObservationIgnored private var inFlight: [String: Pending] = [:]
+    @ObservationIgnored private var nextToken = 0
     @ObservationIgnored private var running = 0
-    @ObservationIgnored private var waiters: [CheckedContinuation<Void, Never>] = []
+    @ObservationIgnored private var waiters: [(ticket: Int, continuation: CheckedContinuation<Bool, Never>)] = []
     @ObservationIgnored private let lookup: @MainActor (String) async throws -> LiveRoomStatus
     @ObservationIgnored private let now: () -> Date
 
@@ -43,14 +52,45 @@ final class RoomStatusConfirmations {
         return confirmations[room.roomID]?.status ?? .loopCandidate
     }
 
-    /// 由卡片的 `.task` 调用。卡片滑出屏幕时任务被取消，排队中的请求随之放弃。
+    /// 由卡片的 `.task` 调用。卡片滑出屏幕时任务被取消；同一房间的所有卡片都走开后，
+    /// 排队中的请求随之放弃。查询失败不缓存，卡片下次出现时重试。
     func confirmIfNeeded(_ room: LiveRoomItem) async {
-        guard room.status == .loopCandidate else { return }
+        guard room.status == .loopCandidate, !Task.isCancelled else { return }
         let id = room.roomID
         if let existing = confirmations[id], now().timeIntervalSince(existing.confirmedAt) < Self.lifetime { return }
-        guard inFlight.insert(id).inserted else { return }
-        defer { inFlight.remove(id) }
-        await acquire()
+        var pending: Pending
+        if let existing = inFlight[id] {
+            pending = existing
+        } else {
+            nextToken += 1
+            let token = nextToken
+            pending = Pending(token: token, task: Task { [weak self] in await self?.confirm(id, token: token) }, waiters: 0)
+        }
+        pending.waiters += 1
+        inFlight[id] = pending
+        let task = pending.task
+        let token = pending.token
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.leave(id, token: token) }
+        }
+    }
+
+    private func leave(_ id: String, token: Int) {
+        guard var pending = inFlight[id], pending.token == token else { return }
+        pending.waiters -= 1
+        if pending.waiters > 0 {
+            inFlight[id] = pending
+        } else {
+            inFlight[id] = nil
+            pending.task.cancel()
+        }
+    }
+
+    private func confirm(_ id: String, token: Int) async {
+        defer { if inFlight[id]?.token == token { inFlight[id] = nil } }
+        guard await acquire() else { return }
         defer { release() }
         guard !Task.isCancelled, let status = try? await lookup(id), !Task.isCancelled else { return }
         let stamp = now()
@@ -58,17 +98,32 @@ final class RoomStatusConfirmations {
         confirmations[id] = Confirmation(status: status, confirmedAt: stamp)
     }
 
-    private func acquire() async {
+    /// 返回 false 表示排队期间被取消，没有拿到名额。
+    private func acquire() async -> Bool {
         if running < Self.concurrency {
             running += 1
-            return
+            return true
         }
-        await withCheckedContinuation { waiters.append($0) }
+        nextToken += 1
+        let ticket = nextToken
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+                if Task.isCancelled { continuation.resume(returning: false) }
+                else { waiters.append((ticket, continuation)) }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.abandon(ticket) }
+        }
+    }
+
+    private func abandon(_ ticket: Int) {
+        guard let index = waiters.firstIndex(where: { $0.ticket == ticket }) else { return }
+        waiters.remove(at: index).continuation.resume(returning: false)
     }
 
     /// 名额直接转交给下一个等待者，`running` 不变。
     private func release() {
-        if waiters.isEmpty { running -= 1 } else { waiters.removeFirst().resume() }
+        if waiters.isEmpty { running -= 1 } else { waiters.removeFirst().continuation.resume(returning: true) }
     }
 }
 
@@ -85,6 +140,11 @@ final class RecommendStore {
     private var hasMore = true
     /// 下拉刷新会让进行中的 loadMore 作废，避免旧页数据接到新列表上。
     private var loadGeneration = 0
+    private let fetch: @MainActor (Int) async throws -> LiveCategoryResult
+
+    init(fetch: (@MainActor (Int) async throws -> LiveCategoryResult)? = nil) {
+        self.fetch = fetch ?? { try await Sites.douyu.recommendRooms(page: $0) }
+    }
 
     /// 列表只在这次加载时准确。App 长时间开着，回到前台时超过这个时长就重新加载。
     static let staleAfter: TimeInterval = 300
@@ -96,16 +156,17 @@ final class RecommendStore {
     }
 
     /// `quietly`: an automatic reload that fails keeps the rooms already on screen.
+    /// 页码和 hasMore 只在成功时改写：静默刷新失败保留旧列表，也必须保留它对应的分页位置，
+    /// 否则下一次加载会重新请求第 2 页，结果全被去重滤掉，无限滚动就此卡住。
     func refresh(quietly: Bool = false) async {
         loadGeneration += 1
         let generation = loadGeneration
-        page = 1
-        hasMore = true
         phase = .loading
         do {
-            let result = try await Sites.douyu.recommendRooms(page: 1)
+            let result = try await fetch(1)
             guard generation == loadGeneration else { return }
             rooms = result.items
+            page = 1
             hasMore = result.hasMore
             loadedAt = Date()
             phase = .loaded
@@ -125,7 +186,7 @@ final class RecommendStore {
         let nextPage = page + 1
         defer { isLoadingMore = false }
         do {
-            let result = try await Sites.douyu.recommendRooms(page: nextPage)
+            let result = try await fetch(nextPage)
             guard generation == loadGeneration else { return }
             page = nextPage
             // 斗鱼分页偶发重复，按 roomID 去重
@@ -170,9 +231,11 @@ final class CategoryRoomsStore {
     private var hasMore = true
     private var isLoadingMore = false
     private var loadGeneration = 0
+    private let fetch: @MainActor (LiveSubCategory, Int) async throws -> LiveCategoryResult
 
-    init(category: LiveSubCategory) {
+    init(category: LiveSubCategory, fetch: (@MainActor (LiveSubCategory, Int) async throws -> LiveCategoryResult)? = nil) {
         self.category = category
+        self.fetch = fetch ?? { try await Sites.douyu.categoryRooms($0, page: $1) }
     }
 
     /// 列表只在这次加载时准确。App 长时间开着，回到前台时超过这个时长就重新加载。
@@ -185,16 +248,16 @@ final class CategoryRoomsStore {
     }
 
     /// `quietly`: an automatic reload that fails keeps the rooms already on screen.
+    /// 与推荐页相同：分页位置只在成功时改写。
     func refresh(quietly: Bool = false) async {
         loadGeneration += 1
         let generation = loadGeneration
-        page = 1
-        hasMore = true
         phase = .loading
         do {
-            let result = try await Sites.douyu.categoryRooms(category, page: 1)
+            let result = try await fetch(category, 1)
             guard generation == loadGeneration else { return }
             rooms = result.items
+            page = 1
             hasMore = result.hasMore
             loadedAt = Date()
             phase = .loaded
@@ -212,7 +275,7 @@ final class CategoryRoomsStore {
         let nextPage = page + 1
         defer { isLoadingMore = false }
         do {
-            let result = try await Sites.douyu.categoryRooms(category, page: nextPage)
+            let result = try await fetch(category, nextPage)
             guard generation == loadGeneration else { return }
             page = nextPage
             let existing = Set(rooms.map(\.roomID))
@@ -344,6 +407,12 @@ final class RoomStore {
 
     private var danmaku: (any LiveDanmakuClient)?
     private var danmakuPump: Task<Void, Never>?
+    /// 每建一个弹幕客户端加一；旧客户端的收尾不能清掉新客户端。
+    private var danmakuSession = 0
+    /// 弹幕连接自己的提示。它和取流错误共用 `danmakuNotice` 展示，
+    /// 但弹幕恢复只撤回自己发的那条，不能把「取流失败…」一起清掉；
+    /// 取流错误正在显示时，弹幕提示也不覆盖它。
+    private var danmakuConnectionNotice: String?
 
     /// 由 RoomView 注入：用于按设置过滤弹幕、选默认清晰度、写观看历史
     private var settings: AppSettings?
@@ -423,6 +492,10 @@ final class RoomStore {
                 }
                 await startDanmaku(detail: loaded)
                 guard isCurrentRequest(generation) else { return }
+            } else if danmaku == nil, let detail {
+                // 关闭后再次进入（例如从录像列表返回）或连接已结束：详情还在，弹幕要重新连上
+                await startDanmaku(detail: detail)
+                guard isCurrentRequest(generation) else { return }
             }
             guard let detail, detail.isLiving else { return }
             if qualities.isEmpty {
@@ -492,7 +565,7 @@ final class RoomStore {
             lastStreamChangeWasReconnect = false
             playURL = fresh
             if remember, remembersQuality { settings?.data.lastQualityName = quality.quality }
-            danmakuNotice = nil
+            clearStreamNotice()
             offlineNotice = nil
             return true
         } catch {
@@ -549,7 +622,7 @@ final class RoomStore {
             lastStreamChangeWasReconnect = rotateLine
             playURL = fresh
             offlineNotice = nil
-            danmakuNotice = nil
+            clearStreamNotice()
             return currentStreamURL
         } catch {
             guard isCurrentRequest(generation) else { return nil }
@@ -618,12 +691,20 @@ final class RoomStore {
         guard danmaku == nil else { return }
         do {
             let client = try site.makeDanmakuClient(payload: detail.danmakuPayload)
+            danmakuSession += 1
+            let session = danmakuSession
             danmaku = client
             let stream = client.events
             danmakuPump = Task { @MainActor [weak self] in
                 defer {
                     if let self, !Task.isCancelled {
                         self.flushPendingMessages()
+                        // 事件流自己结束（连接被关闭）：放掉这个客户端，下次 load() 会重新连接
+                        if self.danmakuSession == session {
+                            self.danmaku = nil
+                            self.danmakuPump = nil
+                            Task { await client.stop() }
+                        }
                     }
                 }
                 for await event in stream {
@@ -631,23 +712,36 @@ final class RoomStore {
                     if Task.isCancelled { return }
                     switch event {
                     case .ready:
-                        self.danmakuNotice = nil
+                        self.setDanmakuConnectionNotice(nil)
                     case .message(let message):
                         guard self.danmakuDeliveryEnabled else { continue }
                         // 屏蔽词在入口处过滤一次，飞幕和列表同时生效
                         self.enqueueDanmaku(message)
                     case .notice(let text):
-                        self.danmakuNotice = text
+                        self.setDanmakuConnectionNotice(text)
                     case .closed(let reason):
                         self.flushSoon()
-                        self.danmakuNotice = reason
+                        self.setDanmakuConnectionNotice(reason)
                     }
+                    // 连接已终结：结束循环，由 defer 放掉客户端，下次 load() / 播放时重建
+                    if case .closed = event { break }
                 }
             }
             await client.start()
         } catch {
-            danmakuNotice = "弹幕连接失败：\(error.localizedDescription)"
+            setDanmakuConnectionNotice("弹幕连接失败：\(error.localizedDescription)")
         }
+    }
+
+    private func setDanmakuConnectionNotice(_ text: String?) {
+        let showingOwn = danmakuNotice == nil || danmakuNotice == danmakuConnectionNotice
+        danmakuConnectionNotice = text
+        if showingOwn { danmakuNotice = text }
+    }
+
+    /// 取流成功：撤下取流错误，若弹幕仍在重连则露出弹幕自己的提示。
+    private func clearStreamNotice() {
+        danmakuNotice = danmakuConnectionNotice
     }
 
     /// 约 80ms 合并一次。安静的房间几乎无感，热门房不会每条弹幕都刷新整页。
@@ -690,9 +784,14 @@ final class RoomStore {
         flushTask?.cancel()
         flushTask = nil
         pendingMessages.removeAll()
+        danmakuSession += 1
         danmakuPump?.cancel()
         danmakuPump = nil
-        await danmaku?.stop()
+        // 先摘下再等待：stop 进行中再次 load() 会新建连接，而不是撞上正在关闭的旧客户端
+        let client = danmaku
         danmaku = nil
+        if danmakuNotice == danmakuConnectionNotice { danmakuNotice = nil }
+        danmakuConnectionNotice = nil
+        await client?.stop()
     }
 }

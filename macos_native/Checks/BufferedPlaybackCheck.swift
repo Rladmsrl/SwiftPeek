@@ -112,14 +112,23 @@ struct BufferedPlaybackCheck {
         precondition(!policy.begin(now: 240.5, sourceAge: 240.5, ended: true, stalled: false))
         precondition(policy.begin(now: 241, sourceAge: 241, ended: true, stalled: false))
         policy.failed(at: 241)
+        precondition(!policy.begin(now: 242.5, sourceAge: 242.5, ended: true, stalled: false), "Backoff did not grow")
         precondition(policy.begin(now: 243, sourceAge: 243, ended: true, stalled: false))
         policy.failed(at: 243)
-        precondition(!policy.begin(now: 300, sourceAge: 300, ended: true, stalled: false))
-        policy.stablePlayback()
-        precondition(policy.begin(now: 301, sourceAge: 301, ended: true, stalled: false))
+        precondition(!policy.exhausted(at: 243), "Three quick failures ended playback")
+        // A brief API outage at the 240-second renewal must not disable renewal before the CDN cutoff.
+        precondition(policy.begin(now: 248, sourceAge: 248, ended: false, stalled: false), "Renewal stopped after three failures")
+        for t in stride(from: 249.0, through: 400, by: 1) { policy.failed(at: t) }
+        precondition(!policy.begin(now: 401, sourceAge: 401, ended: true, stalled: false))
+        precondition(policy.begin(now: 400 + LiveHandoffPolicy.maximumBackoff, sourceAge: 415, ended: true, stalled: false),
+                     "Backoff exceeded its cap")
+        precondition(policy.exhausted(at: 400), "Persistent failures never became final")
+        policy.committed()
+        precondition(!policy.exhausted(at: 401) && policy.attempts == 0, "A successful preparation kept the failure budget")
+        precondition(policy.begin(now: 401, sourceAge: 401, ended: true, stalled: false))
         var immediate = LiveHandoffPolicy()
         precondition(immediate.begin(now: 1, sourceAge: 1, ended: true, stalled: false))
-        print("PASS: proactive 240-second refresh, immediate EOF/403 recovery, bounded retry backoff")
+        print("PASS: proactive 240-second refresh, immediate EOF/403 recovery, capped backoff without a permanent cutoff")
         for seconds in [1.0, 240.0, 300.0, 3600.0] {
             let end = CMTime(seconds: seconds + 0.8, preferredTimescale: 1000)
             let clock = CMTime(seconds: seconds, preferredTimescale: 1000)
@@ -152,15 +161,16 @@ struct BufferedPlaybackCheck {
         precondition(!renewal.begin(now: 250, sourceAge: 250, ended: false, stalled: false, healthy: false))
         precondition(renewal.begin(now: 276, sourceAge: 276, ended: false, stalled: false, healthy: false))
         var offline = LiveHandoffPolicy()
-        for _ in 0..<LiveHandoffPolicy.maximumAttempts {
+        for _ in 0..<10 {
             precondition(offline.begin(now: 1, sourceAge: 1, ended: true, stalled: false))
             offline.forgive()
         }
-        precondition(!offline.exhausted)
-        for _ in 0..<LiveHandoffPolicy.maximumAttempts { _ = offline.begin(now: 1, sourceAge: 1, ended: true, stalled: false) }
-        precondition(offline.exhausted)
+        precondition(!offline.exhausted(at: 1000) && offline.attempts == 0, "Offline failures consumed the budget")
+        for t in 0..<LiveHandoffPolicy.maximumAttempts { offline.failed(at: TimeInterval(t)) }
+        precondition(offline.exhausted(at: 100))
         offline.networkChanged()
-        precondition(offline.begin(now: 1, sourceAge: 1, ended: true, stalled: false))
+        precondition(!offline.exhausted(at: 100))
+        precondition(offline.begin(now: 100, sourceAge: 1, ended: true, stalled: false))
         for _ in 0..<100 {
             let age = LiveHandoffPolicy.jitteredRenewalAge()
             precondition(abs(age - LiveHandoffPolicy.renewalAge) <= LiveHandoffPolicy.renewalJitter && age < LiveHandoffPolicy.latestRenewalAge)
@@ -181,12 +191,15 @@ struct BufferedPlaybackCheck {
         precondition(jitter.stalled(at: 15) == 6 && jitter.stalled(at: 20) == 6)
         precondition(LiveJitterPolicy.resumeLevels.max()! < LiveTagBuffer.maximumSeconds)
         precondition(jitter.stalled(at: 20 + 2 * LiveJitterPolicy.decayInterval) == 3, "Stable playback did not shrink the reserve")
-        precondition(!LiveJitterPolicy.shouldResume(seconds: 0.2, target: 2, ready: false, count: 3, ended: false, waited: 1),
+        precondition(!LiveJitterPolicy.shouldResume(seconds: 0.2, target: 2, capacityLimited: false, count: 3, ended: false, waited: 1),
                      "Resumed with no reserve after a stall")
-        precondition(LiveJitterPolicy.shouldResume(seconds: 2, target: 2, ready: false, count: 30, ended: false, waited: 1))
-        precondition(LiveJitterPolicy.shouldResume(seconds: 0.2, target: 2, ready: false, count: 3, ended: true, waited: 1))
-        precondition(LiveJitterPolicy.shouldResume(seconds: 0.5, target: 4.5, ready: false, count: 3, ended: false, waited: 10))
-        precondition(!LiveJitterPolicy.shouldResume(seconds: 0, target: 2, ready: false, count: 0, ended: true, waited: 30))
+        precondition(LiveJitterPolicy.shouldResume(seconds: 2, target: 2, capacityLimited: false, count: 30, ended: false, waited: 1))
+        precondition(LiveJitterPolicy.shouldResume(seconds: 0.2, target: 2, capacityLimited: false, count: 3, ended: true, waited: 1))
+        precondition(LiveJitterPolicy.shouldResume(seconds: 0.5, target: 4.5, capacityLimited: false, count: 3, ended: false, waited: 10))
+        precondition(!LiveJitterPolicy.shouldResume(seconds: 0, target: 2, capacityLimited: false, count: 0, ended: true, waited: 30))
+        precondition(!LiveJitterPolicy.shouldResume(seconds: 4.2, target: 6, capacityLimited: false, count: 300, ended: false, waited: 2),
+                     "The 6-second refill level resumed at the 4-second startup target")
+        precondition(LiveJitterPolicy.shouldResume(seconds: 3, target: 6, capacityLimited: true, count: 300, ended: false, waited: 2))
         precondition(LiveJitterPolicy.refillStart(afterHandoff: 0, now: 30) == 30 - LiveJitterPolicy.rebufferTimeout + LiveJitterPolicy.handoffRefillGrace)
         precondition(LiveJitterPolicy.refillStart(afterHandoff: 29, now: 30) == 29)
         var underruns = LiveJitterPolicy()
@@ -203,6 +216,66 @@ struct BufferedPlaybackCheck {
         precondition(path.update(satisfied: true, interfaces: ["pdp_ip0"]) && path.snapshot.generation == 3)
         precondition(path.update(satisfied: false, interfaces: []) && !path.update(satisfied: false, interfaces: []))
         print("PASS: path generation advances on loss, recovery and interface change only")
+
+        func audio(_ ms: UInt32) -> FLVTag { FLVTag(type: .audio, timestamp: ms, payload: Data([0xAF, 1, 0x21, 0x10])) }
+        let interleaved = LiveTagBuffer()
+        try await interleaved.append(tag(1000, header: true))
+        try await interleaved.append(tag(1000, key: true))
+        try await interleaved.append(audio(990))
+        let inverted = await interleaved.snapshot()
+        precondition(inverted.seconds >= 0 && inverted.seconds < 1 && !inverted.ready,
+                     "An audio/video timestamp inversion wrapped the buffer length")
+        try await interleaved.append(tag(1040))
+        try await interleaved.append(audio(1013))
+        let advanced = await interleaved.snapshot()
+        precondition(advanced.seconds == 0.04)
+        print("PASS: interleaved audio/video timestamp inversions never wrap the buffered duration")
+
+        let draining = LiveTagBuffer()
+        try await draining.append(tag(0, header: true))
+        try await draining.append(tag(0, key: true))
+        for i in 1...8 { try await draining.append(tag(UInt32(i * 1000))) }
+        let blocked = Task { try await draining.append(tag(9000)) }
+        try await waitFor { await draining.snapshot().capacityLimited }
+        _ = await draining.pop() // sequence header: no media consumed yet
+        try await Task.sleep(for: .milliseconds(20))
+        let stillFull = await draining.snapshot()
+        precondition(stillFull.capacityLimited, "Producer woke before real room was made")
+        _ = await draining.pop() // first second of media
+        try await blocked.value
+        let resumed = await draining.snapshot()
+        precondition(!resumed.capacityLimited && resumed.lastTimestamp == 9000)
+        print("PASS: a full producer sleeps until consumption makes room, without polling")
+
+        let edge = LiveTagBuffer()
+        try await edge.append(tag(0, header: true))
+        try await edge.append(tag(0, key: true))
+        while await edge.pop() != nil {}
+        let started = ContinuousClock.now
+        let arrival = Task { try await Task.sleep(for: .milliseconds(30)); try await edge.append(tag(40)) }
+        await edge.waitForTag(timeout: .seconds(5))
+        let woke = await edge.snapshot()
+        precondition(ContinuousClock.now - started < .seconds(2) && woke.count == 1,
+                     "The live-edge wait did not wake on the next tag")
+        try await arrival.value
+        _ = await edge.pop()
+        let timedOut = ContinuousClock.now
+        await edge.waitForTag(timeout: .milliseconds(30))
+        precondition(ContinuousClock.now - timedOut < .seconds(2))
+        await edge.finish(nil)
+        await edge.waitForTag(timeout: .seconds(5))
+        print("PASS: the consumer waits for the next tag or a short timeout instead of polling every 10 ms")
+
+        precondition(FLVVideoTag.Header(payload: Data([0x17, 1]))?.isKeyframe == true)
+        precondition(FLVVideoTag.Header(payload: Data([0x1C, 1]))?.isAVC == false)
+        precondition(FLVVideoTag.Header(payload: Data([0x17])) == nil)
+        let truncated = LiveTagBuffer()
+        try await truncated.append(FLVTag(type: .video, timestamp: 0, payload: Data([0x17, 1])))
+        do {
+            try await truncated.append(FLVTag(type: .video, timestamp: 0, payload: Data([0x1C, 0, 0, 0, 0])))
+            fatalError("HEVC was accepted")
+        } catch LivePlayerError.unsupportedCodec {}
+        print("PASS: per-frame validation reads only header bytes; truncated H.264 is skipped, other codecs rejected")
 
         let silent = BufferedLiveSource(request: URLRequest(url: URL(string: "https://fixture.invalid/waiting")!),
                                         diagnosticID: "silent", configuration: config())

@@ -115,6 +115,22 @@ struct FLVVideoTag {
     let compositionTimeOffset: Int32
     let packet: Packet
 
+    /// 只读前两个字节，不拷贝帧体。缓冲层逐帧校验时用，避免每帧多复制一次整帧数据。
+    struct Header {
+        let isAVC: Bool
+        let isKeyframe: Bool
+        let packetType: UInt8
+        var isSequenceHeader: Bool { packetType == 0 }
+        var isNALUs: Bool { packetType == 1 }
+
+        init?(payload: Data) {
+            guard payload.count >= 2, let first = payload.first else { return nil }
+            isAVC = first & 0x0F == 7
+            isKeyframe = (first & 0xF0) >> 4 == 1
+            packetType = payload[payload.index(after: payload.startIndex)]
+        }
+    }
+
     /// 仅支持 AVC(H.264)；其他编码返回 nil 由上层给出明确提示
     init?(payload: Data) {
         guard payload.count >= 5 else { return nil }

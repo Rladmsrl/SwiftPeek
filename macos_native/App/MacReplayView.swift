@@ -10,7 +10,7 @@ private enum ReplayPanel: String, CaseIterable, Identifiable {
 /// 录像窗口：左侧播放器（弹幕飞屏 + 热度进度条），右侧弹幕回放 / AI 章节 / 选集。
 struct MacReplayView: View {
     let route: ReplayRoute
-    @State private var session = ReplaySession()
+    @State private var sessionBox = LazyBox<ReplaySession>()
     @State private var list: ReplayListStore?
     @State private var progress = ReplayProgressStore.shared
     @State private var panel: ReplayPanel
@@ -30,6 +30,8 @@ struct MacReplayView: View {
         _list = State(initialValue: route.roomID.map { ReplayListStore(roomID: $0) })
     }
 
+    /// Created once per window; re-initialising the view never builds a throwaway AVPlayer.
+    private var session: ReplaySession { sessionBox.get { ReplaySession() } }
     private var player: ReplayPlayer { session.player }
     private var detail: DouyuReplayDetail? { session.detail }
     private var roomID: String? {
@@ -76,11 +78,13 @@ struct MacReplayView: View {
         })
         .task { start() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { notification in
-            if let closing = notification.object as? NSWindow, closing === window { session.close() }
+            if let closing = notification.object as? NSWindow, closing === window { close() }
         }
+        // 外部链接统一交给主窗口处理
+        .onOpenURL { MacExternalLinks.deliver($0) }
         .onDisappear {
             hideTask?.cancel()
-            session.close()
+            close()
         }
         .onChange(of: detail?.roomID) { _, id in
             guard list == nil, let id, !id.isEmpty else { return }
@@ -92,8 +96,14 @@ struct MacReplayView: View {
         .background { shortcuts }
     }
 
+    private func close() {
+        MacSessionRegistry.unregister(session)
+        session.close()
+    }
+
     private func start() {
         session.configure(settings: settings)
+        MacSessionRegistry.register(session)
         if let hashID = route.hashID { session.open(hashID: hashID, start: route.start) }
         guard let list else { return }
         Task {

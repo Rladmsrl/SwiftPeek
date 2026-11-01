@@ -10,9 +10,14 @@ final class MacRoomSession {
     private(set) var store: RoomStore
     let player = FLVLivePlayer()
     let pip = PiPController()
-    var pipActive = false
+    var pipActive = false { didSet { updateDanmakuDelivery() } }
     var isWorking = false
+    /// Minimized, covered or on another Space. Danmaku is not rendered while hidden.
+    var windowOccluded = false { didSet { updateDanmakuDelivery() } }
+    @ObservationIgnored weak var window: NSWindow?
     private var opened = false
+    /// A window can disappear and reappear without closing; the old store's danmaku is gone by then.
+    private var wasClosed = false
     private var generation = 0
     private var operation: Task<Void, Never>?
     private var telemetry: Task<Void, Never>?
@@ -27,6 +32,13 @@ final class MacRoomSession {
     func open(settings: AppSettings, library: LibraryStore) {
         guard !opened else { return }
         opened = true
+        MacSessionRegistry.register(self)
+        var selection: RoomStore.Selection?
+        if wasClosed {
+            selection = store.playbackSelection
+            store = RoomStore(roomID: roomID)
+            updateDanmakuDelivery()
+        }
         self.settings = settings
         self.library = library
         player.volume = settings.data.playerVolume
@@ -51,7 +63,7 @@ final class MacRoomSession {
         }
         player.onSustainedUnderrun = { [weak self] in self?.lowerQualityForWeakNetwork() }
         LiveDiagnostics.record("room.open", roomID: roomID, fields: ["player": player.diagnosticID])
-        loadRoom(autoplay: settings.data.autoPlay)
+        loadRoom(autoplay: settings.data.autoPlay, selection: selection)
         telemetry = Task { [weak self] in
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(15)) } catch { return }
@@ -71,10 +83,25 @@ final class MacRoomSession {
             guard let self, self.isCurrent(token) else { return }
             self.isWorking = false
             self.snapshot(event: "room.loaded")
+            if self.yieldToOpenWindow() { return }
             if autoplay, let url = store.currentStreamURL {
                 self.player.start(url: url, headers: store.playURL?.headers)
             }
         }
+    }
+
+    /// An alias or short room number can resolve to a room that is already open in
+    /// another window. Bring that window forward instead of playing the room twice.
+    private func yieldToOpenWindow() -> Bool {
+        guard let resolved = store.detail?.roomID,
+              let other = MacSessionRegistry.room(resolvedID: resolved, excluding: self) else { return false }
+        LiveDiagnostics.record("room.duplicateWindow", roomID: roomID, fields: ["resolved": resolved])
+        other.window?.deminiaturize(nil)
+        other.window?.makeKeyAndOrderFront(nil)
+        let mine = window
+        close()
+        mine?.close()
+        return true
     }
 
     /// Manual retry rechecks room info and obtains fresh URLs, including a room that went live later.
@@ -85,7 +112,13 @@ final class MacRoomSession {
         let selection = oldStore.playbackSelection
         Task { await oldStore.stop() }
         store = RoomStore(roomID: roomID)
+        updateDanmakuDelivery()
         loadRoom(autoplay: true, selection: selection)
+    }
+
+    /// The floating window still shows danmaku, so only a hidden window without it stops delivery.
+    private func updateDanmakuDelivery() {
+        store.setDanmakuDeliveryEnabled(!windowOccluded || pipActive)
     }
 
     /// Resume using a fresh signed URL without discarding the user's choices.
@@ -184,6 +217,8 @@ final class MacRoomSession {
     func close() {
         guard opened else { return }
         opened = false
+        wasClosed = true
+        MacSessionRegistry.unregister(self)
         generation += 1
         operation?.cancel()
         operation = nil
@@ -219,9 +254,10 @@ final class MacRoomSession {
 
 struct MacRoomView: View {
     let roomID: String
-    @State private var session: MacRoomSession
+    @State private var sessionBox = LazyBox<MacRoomSession>()
     @State private var showChat = true
     @State private var controlsVisible = true
+    @State private var hideTask: Task<Void, Never>?
     @State private var showingDanmakuSettings = false
     @State private var followChat = true
     @State private var window: NSWindow?
@@ -232,8 +268,10 @@ struct MacRoomView: View {
 
     init(roomID: String) {
         self.roomID = roomID
-        _session = State(initialValue: MacRoomSession(roomID: roomID))
     }
+
+    /// Created once per window; re-initialising the view never builds a throwaway player.
+    private var session: MacRoomSession { sessionBox.get { MacRoomSession(roomID: roomID) } }
 
     var body: some View {
         GeometryReader { geometry in
@@ -262,13 +300,12 @@ struct MacRoomView: View {
                     .help("显示 / 隐藏弹幕列表")
             }
         }
-        .background {
-            Button("") { window?.toggleFullScreen(nil) }
-                .keyboardShortcut("f", modifiers: [.command, .control]).hidden()
-        }
+        .background { shortcuts }
         .background(WindowReader { resolved in
             window = resolved
+            session.window = resolved
             resolved?.isReleasedWhenClosed = false
+            session.windowOccluded = resolved.map { !$0.occlusionState.contains(.visible) } ?? false
             session.pip.onRequestRestore = { [weak resolved] in
                 resolved?.deminiaturize(nil)
                 resolved?.makeKeyAndOrderFront(nil)
@@ -278,7 +315,16 @@ struct MacRoomView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { notification in
             if let closing = notification.object as? NSWindow, closing === window { session.close() }
         }
-        .onDisappear { session.close() }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeOcclusionStateNotification)) { notification in
+            guard let changed = notification.object as? NSWindow, changed === window else { return }
+            session.windowOccluded = !changed.occlusionState.contains(.visible)
+        }
+        // 外部链接统一交给主窗口处理
+        .onOpenURL { MacExternalLinks.deliver($0) }
+        .onDisappear {
+            hideTask?.cancel()
+            session.close()
+        }
         .onChange(of: settings.data.danmakuVisibleByDefault) { _, value in session.store.isDanmakuVisible = value }
     }
 
@@ -289,7 +335,7 @@ struct MacRoomView: View {
             Color.black
             FLVVideoLayerView(player: session.player)
             LiveDanmakuLayer(store: session.store, settings: settings.danmakuSettings,
-                             isVisible: session.store.isDanmakuVisible && !session.pipActive)
+                             isVisible: session.store.isDanmakuVisible && !session.pipActive && !session.windowOccluded)
             if session.pipActive {
                 VStack(spacing: 14) {
                     Image(systemName: "pip").font(.system(size: 32, weight: .light))
@@ -321,10 +367,41 @@ struct MacRoomView: View {
             }
         }
         .clipShape(.rect(cornerRadius: 12))
-        .onHover { hovering in
-            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) { controlsVisible = hovering }
+        .contentShape(.rect)
+        .onContinuousHover { phase in
+            switch phase {
+            case .active: revealControls()
+            case .ended:
+                hideTask?.cancel()
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) { controlsVisible = false }
+            }
         }
         .onTapGesture(count: 2) { window?.toggleFullScreen(nil) }
+    }
+
+    /// 鼠标一动就显示控件，静止 2.5 秒后隐藏；全屏时顺便藏起光标（与录像窗口一致）
+    private func revealControls() {
+        if !controlsVisible {
+            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) { controlsVisible = true }
+        }
+        hideTask?.cancel()
+        hideTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2.5))
+            guard !Task.isCancelled, session.player.state == .playing, !showingDanmakuSettings else { return }
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.3)) { controlsVisible = false }
+            if window?.styleMask.contains(.fullScreen) == true { NSCursor.setHiddenUntilMouseMoves(true) }
+        }
+    }
+
+    /// 键盘操作挂在隐藏按钮上：控制条隐藏时也生效，且只注册一次
+    private var shortcuts: some View {
+        Group {
+            Button("") { session.togglePlayback() }.keyboardShortcut(.space, modifiers: [])
+            Button("") { session.player.isMuted.toggle() }.keyboardShortcut("m", modifiers: [])
+            Button("") { session.store.isDanmakuVisible.toggle() }.keyboardShortcut("d", modifiers: [])
+            Button("") { window?.toggleFullScreen(nil) }.keyboardShortcut("f", modifiers: [.command, .control])
+        }
+        .opacity(0).allowsHitTesting(false).accessibilityHidden(true)
     }
 
     @ViewBuilder private var statusOverlay: some View {
@@ -382,12 +459,12 @@ struct MacRoomView: View {
             Button { session.togglePlayback() } label: {
                 Image(systemName: session.player.isActive || session.isWorking ? "pause.fill" : "play.fill")
                     .frame(width: 18)
-            }.help("播放 / 停止（空格）").keyboardShortcut(.space, modifiers: [])
+            }.help("播放 / 停止（空格）")
             Button { session.player.isMuted.toggle() } label: {
                 Image(systemName: session.player.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-            }.help("静音（M）").keyboardShortcut("m", modifiers: [])
+            }.help("静音（M）")
             if expanded {
-                Slider(value: Binding(get: { session.player.volume }, set: { session.player.volume = $0 }), in: 0...1)
+                Slider(value: Binding(get: { session.player.volume }, set: { session.player.volume = $0; session.player.isMuted = false }), in: 0...1)
                     .frame(width: 66).tint(.white).accessibilityLabel("播放器音量")
                     .padding(.leading, 4)
             }
@@ -437,7 +514,7 @@ struct MacRoomView: View {
                 Text(notice).font(.system(size: 11)).foregroundStyle(.secondary)
                     .padding(.horizontal, 14).padding(.top, 10)
             }
-            MacDanmakuList(store: session.store, followChat: followChat)
+            MacDanmakuList(store: session.store, followChat: followChat && !session.windowOccluded)
             Toggle("跟随最新弹幕", isOn: $followChat).toggleStyle(.checkbox)
                 .font(.system(size: 11)).foregroundStyle(.secondary)
                 .padding(.horizontal, 14).padding(.vertical, 10)

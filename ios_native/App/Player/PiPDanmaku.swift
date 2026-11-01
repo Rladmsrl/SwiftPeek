@@ -5,11 +5,15 @@ import Observation
 
 /// Settings can be edited in another tab while the player view is offscreen.
 /// Observe them independently of SwiftUI's view update/lifecycle callbacks.
+/// `data` is one stored struct, so any settings write wakes the tracker; only an
+/// actual change of this preference may reach PiP (a contentSource swap can flicker).
 @MainActor
 final class PiPDanmakuPreference {
     private var generation = 0
+    private var lastValue: Bool?
     func watch(_ settings: AppSettings, onChange: @escaping @MainActor () -> Void) {
         generation += 1
+        lastValue = settings.data.pictureInPictureDanmaku
         observe(settings, generation: generation, onChange: onChange)
     }
     func stop() { generation += 1 }
@@ -19,8 +23,11 @@ final class PiPDanmakuPreference {
         } onChange: { [weak self, weak settings] in
             Task { @MainActor in
                 guard let self, let settings, self.generation == token else { return }
-                onChange()
+                let value = settings.data.pictureInPictureDanmaku
+                let changed = value != self.lastValue
+                self.lastValue = value
                 self.observe(settings, generation: token, onChange: onChange)
+                if changed { onChange() }
             }
         }
     }
@@ -32,7 +39,10 @@ struct PiPDanmakuSnapshot {
     var settings = DanmakuSettings()
     var isVisible = false
     var isPaused = false
+    /// Clears on-screen chat (replay seeks). Live leaves it at 0: a reconnect is not a seek.
     var clearToken = 0
+    /// Video decoder resets. Only drops cached PiP frames; never touches chat.
+    var frameRevision = 0
     var sourceID = ""
 }
 
@@ -56,6 +66,9 @@ final class PiPDanmakuTimeline {
     private var lastTime: TimeInterval?
     private var clock: TimeInterval = 0
     private var wasPaused = false
+    /// Set by a clear until the first post-clear batch arrives (the feed is usually
+    /// empty right after a seek); that whole batch belongs to the new position.
+    private var didClear = false
 
     func reset() {
         items.removeAll()
@@ -65,6 +78,7 @@ final class PiPDanmakuTimeline {
         lastTime = nil
         clock = 0
         wasPaused = false
+        didClear = false
     }
 
     func update(_ snapshot: PiPDanmakuSnapshot, size: CGSize, at time: TimeInterval) {
@@ -85,6 +99,8 @@ final class PiPDanmakuTimeline {
             available = Array(repeating: 0, count: count)
             if changedSource || cleared { consumed = nil }
         }
+        if changedSource { didClear = false }
+        if cleared { didClear = true }
         guard snapshot.isVisible else {
             consumed = snapshot.messages.last?.id
             return
@@ -95,8 +111,10 @@ final class PiPDanmakuTimeline {
         if let consumed, let index = snapshot.messages.lastIndex(where: { $0.id == consumed }) {
             pending = snapshot.messages[(index + 1)...]
         } else {
-            pending = snapshot.messages.suffix(cleared ? 160 : 5)
+            // Opening or switching source shows only the newest few, never a backlog.
+            pending = snapshot.messages.suffix(didClear ? 160 : 5)
         }
+        if !snapshot.messages.isEmpty { didClear = false }
         for message in pending {
             guard items.count < 80, let track = available.firstIndex(where: { $0 <= clock }) else { break }
             let font = settings.font.makeFont(size: settings.fontSize)
@@ -150,7 +168,8 @@ final class PiPAsyncDanmakuRenderer: @unchecked Sendable {
         let sourceID: String
         let clearToken: Int
         let visible: Bool
-        let paused: Bool
+        // Not `paused`: the timeline already freezes its clock, and invalidating here
+        // would drop the overlay for one frame on every pause and resume.
     }
     private let queue: DispatchQueue
     private let lock = NSLock()
@@ -178,7 +197,7 @@ final class PiPAsyncDanmakuRenderer: @unchecked Sendable {
 
     func image(snapshot: PiPDanmakuSnapshot, size: CGSize, at time: TimeInterval) -> CGImage? {
         let key = Key(size: size, settings: snapshot.settings, sourceID: snapshot.sourceID,
-                      clearToken: snapshot.clearToken, visible: snapshot.isVisible, paused: snapshot.isPaused)
+                      clearToken: snapshot.clearToken, visible: snapshot.isVisible)
         lock.lock()
         // Invalidate immediately, even if a previous render is still running.
         if latestKey != key { latestKey = key; latestImage = nil; revision += 1 }
@@ -217,12 +236,20 @@ final class PiPFrameCompositor {
     private var pool: CVPixelBufferPool?
     private var outputSize = CGSize.zero
     private var format: CMVideoFormatDescription?
+    // A larger source (replay 1080p) is scaled once per distinct frame, not on every
+    // 60 Hz tick. Holding `scaledFrom` keeps its identity unique while cached.
+    private var sourcePool: CVPixelBufferPool?
+    private var scaledFrom: CVPixelBuffer?
+    private var scaledSource: CVPixelBuffer?
 
     func reset() {
         timeline.reset()
         pool = nil
         format = nil
         outputSize = .zero
+        sourcePool = nil
+        scaledFrom = nil
+        scaledSource = nil
     }
 
     func compose(_ frame: CVPixelBuffer, snapshot: PiPDanmakuSnapshot, at time: TimeInterval,
@@ -246,21 +273,17 @@ final class PiPFrameCompositor {
         if size != outputSize {
             outputSize = size
             format = nil
-            let attributes: [String: Any] = [
-                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-                kCVPixelBufferWidthKey as String: Int(size.width),
-                kCVPixelBufferHeightKey as String: Int(size.height),
-                kCVPixelBufferIOSurfacePropertiesKey as String: [:],
-                kCVPixelBufferMetalCompatibilityKey as String: true,
-            ]
-            CVPixelBufferPoolCreate(nil, nil, attributes as CFDictionary, &pool)
+            pool = Self.makePool(size)
+            sourcePool = nil
+            scaledFrom = nil
+            scaledSource = nil
         }
         guard let pool else { return nil }
         var pixel: CVPixelBuffer?
         let limits = [kCVPixelBufferPoolAllocationThresholdKey as String: 6] as CFDictionary
         guard CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(nil, pool, limits, &pixel) == kCVReturnSuccess,
-              let pixel else { return nil }
-        guard PiPPixelTransfer.copy(frame, to: pixel) else { return nil }
+              let pixel, let source = outputSized(frame, size: size),
+              PiPPixelTransfer.copy(source, to: pixel) else { return nil }
         // Failure to paint optional text must not drop a successfully copied video frame.
         if let overlay { draw(overlay, into: pixel, size: size) }
         if format == nil { CMVideoFormatDescriptionCreateForImageBuffer(allocator: nil, imageBuffer: pixel, formatDescriptionOut: &format) }
@@ -274,6 +297,34 @@ final class PiPFrameCompositor {
         // A control timebase is used by PiP. Keep PTS in that same clock domain;
         // combining it with DisplayImmediately is explicitly discouraged by AVFoundation.
         return sample
+    }
+
+    private static func makePool(_ size: CGSize) -> CVPixelBufferPool? {
+        let attributes: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: Int(size.width),
+            kCVPixelBufferHeightKey as String: Int(size.height),
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:],
+            kCVPixelBufferMetalCompatibilityKey as String: true,
+        ]
+        var pool: CVPixelBufferPool?
+        CVPixelBufferPoolCreate(nil, nil, attributes as CFDictionary, &pool)
+        return pool
+    }
+
+    /// Live frames are already at most 480 px and pass straight through.
+    private func outputSized(_ frame: CVPixelBuffer, size: CGSize) -> CVPixelBuffer? {
+        if CVPixelBufferGetWidth(frame) == Int(size.width), CVPixelBufferGetHeight(frame) == Int(size.height) { return frame }
+        if scaledFrom === frame, let scaledSource { return scaledSource }
+        if sourcePool == nil { sourcePool = Self.makePool(size) }
+        guard let sourcePool else { return nil }
+        var pixel: CVPixelBuffer?
+        let limits = [kCVPixelBufferPoolAllocationThresholdKey as String: 3] as CFDictionary
+        guard CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(nil, sourcePool, limits, &pixel) == kCVReturnSuccess,
+              let pixel, PiPPixelTransfer.copy(frame, to: pixel) else { return nil }
+        scaledFrom = frame
+        scaledSource = pixel
+        return pixel
     }
 
     private func draw(_ overlay: CGImage, into buffer: CVPixelBuffer, size: CGSize) {

@@ -96,6 +96,7 @@ struct MacSettingsView: View {
             Section("窗口与快捷键") {
                 LabeledContent("播放 / 停止", value: "空格")
                 LabeledContent("静音", value: "M")
+                LabeledContent("显示 / 隐藏弹幕", value: "D")
                 LabeledContent("进入 / 退出全屏", value: "⌃ ⌘ F  或双击画面")
                 LabeledContent("搜索", value: "⌘ F")
                 Text("直播间独立播放。浏览其他页面时继续播放，关闭直播窗口时停止。")

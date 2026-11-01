@@ -188,6 +188,8 @@ struct MobilePlaybackCheck {
         try await checkMultiWatch()
         try await checkMultiWatchDanmaku()
         try await checkWeakNetwork()
+        try await checkForegroundAndReopen()
+        try await checkMultiWatchDowngradeFloor()
         try await checkRoomStatus()
     }
 
@@ -388,6 +390,100 @@ struct MobilePlaybackCheck {
         let legacy = try JSONDecoder().decode(SettingsData.self, from: Data("{}".utf8))
         precondition(legacy.multiWatchDanmakuMode == .selected)
         print("PASS: three danmaku modes, per-room opt-out, bounded admission without bursts, pressure/focus/background and unthrottled single-room return")
+    }
+
+    @MainActor private static func checkForegroundAndReopen() async throws {
+        let settings = AppSettings()
+        let saved = settings.data
+        defer { settings.data = saved }
+        settings.data.autoPlay = true
+        settings.data.backgroundAudio = true
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let library = LibraryStore(storageDirectory: directory)
+        let site = FakeSite()
+        let foreground = ForegroundPlayback()
+        let playerA = FakeMobilePlayer(), playerB = FakeMobilePlayer()
+        let a = MobileRoomPlaybackSession(roomID: "a", player: playerA, site: site, backgroundGrace: .milliseconds(10), foreground: foreground)
+        let b = MobileRoomPlaybackSession(roomID: "b", player: playerB, site: site, backgroundGrace: .milliseconds(10), foreground: foreground)
+        a.open(settings: settings, library: library)
+        await a.waitUntilLoaded()
+        precondition(playerA.isActive && foreground.owner === a)
+        b.open(settings: settings, library: library)
+        await b.waitUntilLoaded()
+        precondition(playerB.isActive && !playerA.isActive, "Two single-room pages played at once")
+        let storeA = a.store
+        a.open(settings: settings, library: library) // A's tab is selected again
+        await a.waitUntilLoaded()
+        precondition(playerA.isActive && !playerB.isActive && a.store === storeA, "Reappearing page reloaded or did not take over")
+        a.stopPlayback()
+        b.open(settings: settings, library: library)
+        await b.waitUntilLoaded()
+        a.open(settings: settings, library: library)
+        precondition(playerB.isActive && !playerA.isActive, "A manually stopped page stole playback on reappearance")
+        print("PASS: one single-room page plays at a time; a reappearing page takes over without reloading")
+
+        // iOS wires these through MobilePlaybackInterruption while multi-watch is presented.
+        a.setSuspended(true); b.setSuspended(true)
+        try await settle()
+        precondition(!playerA.isActive && !playerB.isActive)
+        a.setSuspended(false); b.setSuspended(false)
+        await b.waitUntilLoaded()
+        try await settle()
+        precondition(playerB.isActive && !playerA.isActive, "Leaving multi-watch restarted a hidden room")
+        print("PASS: leaving multi-watch resumes only the foreground room")
+
+        b.chooseQuality(2)
+        await b.waitUntilLoaded()
+        let storeB = b.store
+        b.close()
+        precondition(!playerB.isActive && foreground.owner == nil)
+        b.open(settings: settings, library: library) // back from the replay list
+        await b.waitUntilLoaded()
+        precondition(b.store !== storeB && b.store.detail != nil, "Reopened room reused the stopped store")
+        precondition(b.store.selectedQualityIndex == 2 && playerB.isActive && foreground.owner === b)
+        a.close(); b.close()
+        print("PASS: reopening after leaving gets a fresh store (danmaku, URL) and keeps the chosen quality")
+
+        let orphanPlayer = FakeMobilePlayer()
+        var orphan: MobileRoomPlaybackSession<FakeMobilePlayer>? =
+            MobileRoomPlaybackSession(roomID: "orphan", player: orphanPlayer, site: site, backgroundGrace: .milliseconds(10), foreground: foreground)
+        orphan?.open(settings: settings, library: library)
+        await orphan?.waitUntilLoaded()
+        precondition(orphanPlayer.isActive)
+        orphan = nil
+        try await settle()
+        precondition(orphan == nil && !orphanPlayer.isActive && orphanPlayer.onPrepareStream == nil,
+                     "A page destroyed without close() left its stream running")
+        print("PASS: a room page destroyed without leaving (deep link) stops its stream")
+    }
+
+    @MainActor private static func checkMultiWatchDowngradeFloor() async throws {
+        let settings = AppSettings()
+        let saved = settings.data
+        defer { settings.data = saved }
+        settings.data.autoLowerQuality = true
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let library = LibraryStore(storageDirectory: directory)
+        let multi = MultiWatchSession(makePlayer: { FakeMobilePlayer() }, site: FakeSite())
+        multi.configure(settings: settings, library: library)
+        precondition(multi.add(id: "solo", title: "solo"))
+        multi.start()
+        let room = multi.rooms[0]
+        for _ in 0..<500 {
+            if room.playback.store.qualities.count == 3, !room.playback.isWorking, room.playback.player.isActive { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        precondition(room.playback.store.selectedQualityIndex == 1, "Single multi-watch room should start at medium")
+        room.playback.player.onSustainedUnderrun!()
+        await room.playback.waitUntilLoaded()
+        precondition(room.playback.store.selectedQualityIndex == 2 && room.playback.weakNetworkQualityFloor == 2)
+        multi.refreshAutomaticQuality()
+        try await Task.sleep(for: .milliseconds(1100))
+        precondition(room.playback.store.selectedQualityIndex == 2, "Automatic quality undid the weak-network downgrade")
+        multi.finish()
+        print("PASS: multi-watch automatic quality never rises above a weak-network downgrade")
     }
 
     @MainActor private static func checkMultiWatch() async throws {
