@@ -27,14 +27,14 @@ SwiftPeek 是一个开源的斗鱼第三方客户端，使用 Swift / SwiftUI �
 
 ## 下载与隐私
 
-双端最新版本均为 **0.8.7 (21)**（[iOS](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.7-ios) · [macOS](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.7-macos)）。本次是一次整体体检：修复播放稳定性、弹幕断线重连、画中画与多窗口问题，iOS 同时带上 macOS 0.8.6 的共享改进。更新说明：[iOS](docs/release-notes/0.8.7-ios.md) · [macOS](docs/release-notes/0.8.7-macos.md)。
+双端最新版本均为 **0.8.8 (22)**（[iOS](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.8-ios) · [macOS](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.8-macos)）。本次修复 0.8.7 引入的弹幕约每 45 秒重连一次，减少直播在网络波动时不必要的换线，iOS 全屏的「填满屏幕」只对当次全屏生效。更新说明：[iOS](docs/release-notes/0.8.8-ios.md) · [macOS](docs/release-notes/0.8.8-macos.md)。
 
 | 平台 | 下载 | 系统与安装要求 |
 | --- | --- | --- |
-| macOS | [Universal ZIP](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.7-macos/SwiftPeek-0.8.7-macOS-universal.zip) | macOS 26+；包含 arm64 与 x86_64，解压后将 App 拖入“应用程序” |
-| iPhone / iPad | [无签名 IPA](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.7-ios/SwiftPeek-0.8.7-iOS-unsigned.ipa) | iOS / iPadOS 26+、arm64；需要使用自己的签名身份重签后侧载，不能直接安装 |
+| macOS | [Universal ZIP](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.8-macos/SwiftPeek-0.8.8-macOS-universal.zip) | macOS 26+；包含 arm64 与 x86_64，解压后将 App 拖入“应用程序” |
+| iPhone / iPad | [无签名 IPA](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.8-ios/SwiftPeek-0.8.8-iOS-unsigned.ipa) | iOS / iPadOS 26+、arm64；需要使用自己的签名身份重签后侧载，不能直接安装 |
 
-iOS：[对应源码](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.7-ios/SwiftPeek-0.8.7-source.zip) · [SHA-256 校验文件](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.7-ios/SHA256SUMS.txt)。macOS 对应源码和校验文件见 [0.8.7 macOS 发布页](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.7-macos)。
+iOS：[对应源码](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.8-ios/SwiftPeek-0.8.8-source.zip) · [SHA-256 校验文件](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.8-ios/SHA256SUMS.txt)。macOS 对应源码和校验文件见 [0.8.8 macOS 发布页](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.8-macos)。
 
 macOS 包采用 ad-hoc 签名，未做 Developer ID 公证，首次打开可能被 Gatekeeper 阻止。核对来源和校验值后，可按系统提示在“系统设置 → 隐私与安全性”允许该应用。Intel 版本已交叉编译，尚无 Intel 或 macOS 26 真机验证。
 
