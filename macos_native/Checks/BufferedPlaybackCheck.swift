@@ -208,6 +208,20 @@ struct BufferedPlaybackCheck {
         precondition(!underruns.recordUnderrun(at: 171))
         print("PASS: stalls refill a growing reserve before resuming, decay when stable, and repeated ones ask to downgrade")
 
+        // A refill that runs to its timeout on a slow network keeps tags back on purpose.
+        let heldThroughRefill = LiveJitterPolicy.rebufferTimeout + 2.5
+        precondition(heldThroughRefill > LiveJitterPolicy.deliveryStallTimeout)
+        precondition(!LiveJitterPolicy.deliveryStalled(sinceDelivery: heldThroughRefill, holding: true, buffered: 40),
+                     "A refill holding buffered media was treated as a dead stream")
+        precondition(!LiveJitterPolicy.deliveryStalled(sinceDelivery: 11, holding: true, buffered: 40))
+        precondition(LiveJitterPolicy.deliveryStalled(sinceDelivery: 13, holding: true, buffered: 0),
+                     "A starving refill with nothing buffered never counted as stalled")
+        precondition(LiveJitterPolicy.deliveryStalled(sinceDelivery: 13, holding: false, buffered: 40))
+        precondition(!LiveJitterPolicy.deliveryStalled(sinceDelivery: 11, holding: false, buffered: 0))
+        precondition(LiveJitterPolicy.receiveStallTimeout >= 8, "Short radio gaps open a second connection again")
+        precondition(LiveJitterPolicy.receiveStallTimeout < LiveJitterPolicy.deliveryStallTimeout)
+        print("PASS: a refill holding media is not a stall; only a starving or blocked consumer is; short socket gaps are ridden out")
+
         var path = NetworkPathState()
         precondition(!path.update(satisfied: true, interfaces: ["en0"]), "Initial path counted as a change")
         precondition(!path.update(satisfied: true, interfaces: ["en0"]))

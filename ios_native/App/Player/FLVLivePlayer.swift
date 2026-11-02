@@ -776,7 +776,11 @@ final class FLVLivePlayer {
             let lastReceived = source.lastReceivedAt
             let idleLimit = lastReceived == nil ? LiveJitterPolicy.connectTimeout : LiveJitterPolicy.receiveStallTimeout
             let silent = !snapshot.ended && !snapshot.capacityLimited && now - (lastReceived ?? source.startedAt) > idleLimit
-            let stalled = silent || brokenSource || now - lastDelivery > 12
+            // A refill holding tags back is not a dead stream. Counting the hold, a refill that ran
+            // to its 10-second timeout on a slow network could pass 12 s and start a line-rotating recovery.
+            let deliveryStalled = LiveJitterPolicy.deliveryStalled(sinceDelivery: now - lastDelivery,
+                                                                   holding: !initialized || refill != nil, buffered: snapshot.count)
+            let stalled = silent || brokenSource || deliveryStalled
             let healthy = refill == nil && snapshot.seconds >= LiveJitterPolicy.healthyRenewalSeconds
             if preparation == nil, network.satisfied,
                policy.begin(now: now, sourceAge: now - source.startedAt, ended: snapshot.ended,

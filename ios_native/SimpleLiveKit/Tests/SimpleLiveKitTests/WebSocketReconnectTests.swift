@@ -14,13 +14,15 @@ struct WebSocketReconnectTests {
         #expect(firstMinute == .seconds(60))
     }
 
-    @Test("超过两个心跳周期没有帧才算半开")
+    @Test("连续两次心跳没有回应才算半开，只丢一次回送不重连")
     func silenceDeadline() {
         let now = ContinuousClock.now
         let heartbeat = Duration.seconds(45)
         #expect(!WebSocketClient.isSilent(since: now - .seconds(45), now: now, heartbeat: heartbeat))
-        #expect(!WebSocketClient.isSilent(since: now - .seconds(89), now: now, heartbeat: heartbeat))
-        #expect(WebSocketClient.isSilent(since: now - .seconds(91), now: now, heartbeat: heartbeat))
+        // 上一次心跳的回送丢了：下一次检查离再上一次回送约两个周期，稍有计时误差也不能判死
+        #expect(!WebSocketClient.isSilent(since: now - .seconds(91), now: now, heartbeat: heartbeat))
+        #expect(!WebSocketClient.isSilent(since: now - .seconds(112), now: now, heartbeat: heartbeat))
+        #expect(WebSocketClient.isSilent(since: now - .seconds(134), now: now, heartbeat: heartbeat))
     }
 
     @Test("关闭后不再连接，也不抛出")

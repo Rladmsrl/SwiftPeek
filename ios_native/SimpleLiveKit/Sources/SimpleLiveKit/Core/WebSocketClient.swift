@@ -20,7 +20,10 @@ public enum WebSocketEvent: Sendable {
 ///    重连定时器只创建一次、后续 5 秒无条件反复触发的问题；
 /// 3. 重连不设总次数上限，按指数退避（最长 30 秒）。原先 5 次 × 5 秒用完就永久断开，
 ///    手机进电梯、地铁断网半分钟，视频能续上而弹幕再也回不来；
-/// 4. 网络恢复时立即重连；超过两个心跳周期没收到任何帧视为半开连接，主动重建。
+/// 4. 网络恢复时立即重连；连续两次心跳都没有任何回应视为半开连接，主动重建。
+///
+/// 不发协议层 ping：斗鱼弹幕服务器不回 pong，而 ping 后紧跟应用层心跳时连接会被立即断开
+/// （此前每个心跳周期都断线重连一次）。存活信号只靠收到的帧：斗鱼会原样回送每个 `mrkl` 心跳。
 public actor WebSocketClient {
     public enum Status: Sendable {
         case idle, connected, closed, failed
@@ -90,9 +93,11 @@ public actor WebSocketClient {
         return .seconds(min(maximumReconnectDelay, 2 << exponent))
     }
 
-    /// 超过两个心跳周期没有任何帧：连接很可能已经半开（换网、NAT 超时），`receive()` 不会报错。
+    /// 连续两次心跳都没换来任何帧：连接很可能已经半开（换网、NAT 超时），`receive()` 不会报错。
+    /// 检查落在心跳时刻，阈值取 2.5 个周期而不是 2 个：上一次回送离检查恰好约两个周期，
+    /// 卡在阈值上会让「只丢了一次回送」也随计时误差被判为半开。
     static func isSilent(since lastFrame: ContinuousClock.Instant, now: ContinuousClock.Instant, heartbeat: Duration) -> Bool {
-        now - lastFrame > heartbeat * 2
+        now - lastFrame > heartbeat * 2.5
     }
 
     public func connect() {
@@ -172,19 +177,9 @@ public actor WebSocketClient {
             handleFailure(LiveCoreError("弹幕服务器长时间无响应"), from: socket)
             return
         }
-        // 协议层 ping：服务器不回应用层心跳时，pong 也能证明连接还活着，
-        // 安静的房间不会因为没有弹幕被误判为半开而反复重连。
-        socket.sendPing { [weak self] error in
-            guard error == nil else { return }
-            Task { await self?.markAlive(socket) }
-        }
+        // 安静的房间也不会被误判：服务器回送的心跳本身就是一帧，会刷新 lastFrameAt。
         guard let payload = heartbeatProvider() else { return }
         await send(payload)
-    }
-
-    private func markAlive(_ socket: URLSessionWebSocketTask) {
-        guard socket === task else { return }
-        lastFrameAt = .now
     }
 
     public func send(_ data: Data) async {
