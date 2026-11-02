@@ -18,9 +18,14 @@ struct LiveJitterPolicy {
     static let startupSteps: [(waited: TimeInterval, seconds: Double)] = [(3, 2), (6, 1)]
     static let startupFallback: TimeInterval = 10
     /// Silence on an open socket longer than this is treated as a dead connection.
-    static let receiveStallTimeout: TimeInterval = 4
-    /// Before the first byte, DNS/TLS on a weak network gets longer.
+    /// Mobile TCP connections often resume on their own after a few seconds of radio loss.
+    /// At 4 s such a hiccup opened a second connection on another CDN line, which competed
+    /// for the bandwidth the recovering one needed and then replaced it.
+    static let receiveStallTimeout: TimeInterval = 8
+    /// Before the first byte (DNS, TLS and the CDN's first response) on a weak network.
     static let connectTimeout: TimeInterval = 8
+    /// No tag reached the renderer for this long: the source is treated as stalled.
+    static let deliveryStallTimeout: TimeInterval = 12
     /// Proactive renewal is postponed while the tag buffer (excluding what the
     /// renderer already holds) is below this.
     static let healthyRenewalSeconds = 1.0
@@ -37,6 +42,14 @@ struct LiveJitterPolicy {
         guard count > 0 else { return false }
         if ended || waited >= startupFallback { return true }
         return startupSteps.contains { waited >= $0.waited && seconds >= $0.seconds }
+    }
+
+    /// `holding`: startup or a refill is deliberately keeping buffered tags back. That wait
+    /// is bounded by `startupFallback` / `rebufferTimeout` and says nothing about the source,
+    /// so it must not count as a stall; only a hold with nothing buffered (starving) does.
+    static func deliveryStalled(sinceDelivery: TimeInterval, holding: Bool, buffered count: Int) -> Bool {
+        guard !(holding && count > 0) else { return false }
+        return sinceDelivery > deliveryStallTimeout
     }
 
     /// `capacityLimited`: the buffer cannot grow (memory cap), so waiting longer gains nothing.

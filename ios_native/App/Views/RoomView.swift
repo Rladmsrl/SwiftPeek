@@ -25,7 +25,7 @@ struct RoomView: View {
     @State private var showingDanmakuSettings = false
     @State private var hud: PlayerHUD?
     @State private var controlsHideTask: Task<Void, Never>?
-    /// 本次全屏里手动选过的填充 / 适应；nil 表示默认填充
+    /// 本次全屏里手动选过的填充 / 适应；nil 表示默认适应（完整画面）
     @State private var fillOverride: Bool?
     @State private var choosingAdditionalRooms = false
     @State private var pendingRooms: [MultiWatchSelection] = []
@@ -215,9 +215,9 @@ struct RoomView: View {
         }
     }
 
-    /// 全屏优先填满屏幕（Duo 内外屏都是），控件叠在画面上并自动隐藏；
-    /// 右上角可切回完整画面。非全屏始终显示完整画面。
-    private var fillsVideo: Bool { isFullscreen && (fillOverride ?? true) }
+    /// 全屏默认显示完整画面，不裁掉画面边缘；右上角可切到填满屏幕，只对本次全屏生效。
+    /// 非全屏始终显示完整画面。
+    private var fillsVideo: Bool { isFullscreen && (fillOverride ?? false) }
 
     // MARK: - 全屏 chrome
 
