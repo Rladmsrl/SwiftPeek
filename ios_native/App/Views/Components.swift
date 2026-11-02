@@ -364,6 +364,9 @@ struct FollowButton: View {
         Button(action: action) {
             Label(isFollowed ? "已关注" : "关注", systemImage: isFollowed ? "heart.fill" : "heart")
                 .symbolEffect(.bounce, value: isFollowed)
+                // 窄侧栏里由左侧的主播名和统计让位，按钮文字不折行
+                .lineLimit(1)
+                .fixedSize()
                 #if os(iOS)
                 .font(.subheadline.weight(.semibold))
                 #endif

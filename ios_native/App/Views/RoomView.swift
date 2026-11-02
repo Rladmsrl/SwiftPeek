@@ -25,6 +25,8 @@ struct RoomView: View {
     @State private var showingDanmakuSettings = false
     @State private var hud: PlayerHUD?
     @State private var controlsHideTask: Task<Void, Never>?
+    /// 本次全屏里手动选过的填充 / 适应；nil 表示默认填充
+    @State private var fillOverride: Bool?
     @State private var choosingAdditionalRooms = false
     @State private var pendingRooms: [MultiWatchSelection] = []
 
@@ -208,7 +210,14 @@ struct RoomView: View {
         }
         .animation(.easeInOut(duration: 0.2), value: controlsVisible)
         .animation(.easeInOut(duration: 0.2), value: isLocked)
+        .onChange(of: fillsVideo, initial: true) { _, fill in
+            player.videoGravity = fill ? .resizeAspectFill : .resizeAspect
+        }
     }
+
+    /// 全屏优先填满屏幕（Duo 内外屏都是），控件叠在画面上并自动隐藏；
+    /// 右上角可切回完整画面。非全屏始终显示完整画面。
+    private var fillsVideo: Bool { isFullscreen && (fillOverride ?? true) }
 
     // MARK: - 全屏 chrome
 
@@ -662,6 +671,7 @@ struct RoomView: View {
     private func enterFullscreen() {
         LiveDiagnostics.record("ui.fullscreen", fields: ["page": "live", "enabled": "true"])
         wantsFullscreen = true
+        fillOverride = nil
         sceneContext.requestLandscapeFullscreen()
         controlsVisible = true
         resetControlsTimer()
@@ -670,6 +680,7 @@ struct RoomView: View {
     private func exitFullscreen() {
         LiveDiagnostics.record("ui.fullscreen", fields: ["page": "live", "enabled": "false"])
         wantsFullscreen = false
+        fillOverride = nil
         sceneContext.restoreOrientationBeforeFullscreen()
         isLocked = false
         controlsVisible = true
@@ -692,7 +703,7 @@ struct RoomView: View {
     }
 
     private func toggleVideoGravity() {
-        player.videoGravity = player.videoGravity == .resizeAspect ? .resizeAspectFill : .resizeAspect
+        fillOverride = !fillsVideo
     }
 
     // MARK: - 画中画
