@@ -247,11 +247,108 @@ struct AVCConfig {
 
 // MARK: - 音频 tag
 
+/// 检查 AAC `raw_data_block`（ISO/IEC 14496-3 Table 4.3）是否包含音频声道元素。
+///
+/// 斗鱼等直播流会周期性在 FLV 音频轨中插入仅含 `ID_FIL`（或 `ID_DSE`）的元数据 tag
+/// （例如水印坐标 JSON），里面没有任何 `SCE/CPE/CCE/LFE` 音频元素。
+/// 把这类包交给 `AVSampleBufferAudioRenderer` 会让 `ACMP4AACBaseDecoder` 每 1~2 秒报
+/// `err = -1` 丢帧，还会错误推进合成音频 PTS，累积超过漂移阈值后触发向后回跳重叠，导致声音卡顿。
+enum AACRawDataBlock {
+    private static let idSCE: UInt8 = 0
+    private static let idCPE: UInt8 = 1
+    private static let idCCE: UInt8 = 2
+    private static let idLFE: UInt8 = 3
+    private static let idDSE: UInt8 = 4
+    private static let idPCE: UInt8 = 5
+    private static let idFIL: UInt8 = 6
+    private static let idEND: UInt8 = 7
+
+    static func containsAudioElement(_ frame: Data) -> Bool {
+        guard !frame.isEmpty else { return false }
+        return frame.withUnsafeBytes { raw in
+            guard let base = raw.bindMemory(to: UInt8.self).baseAddress else { return false }
+            var reader = BitReader(base: base, byteCount: raw.count)
+            while let element = reader.readBits(3) {
+                switch UInt8(element) {
+                case idSCE, idCPE, idCCE, idLFE, idPCE:
+                    return true
+                case idEND:
+                    return false
+                case idDSE:
+                    // ISO/IEC 14496-3 Table 4.10 data_stream_element()
+                    guard reader.skipBits(4),
+                          let alignFlag = reader.readBits(1),
+                          let rawCount = reader.readBits(8) else { return false }
+                    var count = Int(rawCount)
+                    if count == 255 {
+                        guard let esc = reader.readBits(8) else { return false }
+                        count += Int(esc)
+                    }
+                    if alignFlag != 0 {
+                        reader.alignToByte()
+                    }
+                    guard reader.skipBits(count * 8) else { return false }
+                case idFIL:
+                    // ISO/IEC 14496-3 Table 4.11 fill_element()
+                    guard let rawCount = reader.readBits(4) else { return false }
+                    var count = Int(rawCount)
+                    if count == 15 {
+                        guard let esc = reader.readBits(8) else { return false }
+                        count += Int(esc) - 1
+                    }
+                    guard reader.skipBits(count * 8) else { return false }
+                default:
+                    return false
+                }
+            }
+            return false
+        }
+    }
+
+    private struct BitReader {
+        let base: UnsafePointer<UInt8>
+        let totalBits: Int
+        var bitOffset = 0
+
+        init(base: UnsafePointer<UInt8>, byteCount: Int) {
+            self.base = base
+            self.totalBits = byteCount * 8
+        }
+
+        mutating func readBits(_ count: Int) -> UInt32? {
+            guard count >= 0, count <= 32, totalBits - bitOffset >= count else { return nil }
+            var value: UInt32 = 0
+            for _ in 0..<count {
+                let byte = base[bitOffset >> 3]
+                let bit = (byte >> (7 - (bitOffset & 7))) & 1
+                value = (value << 1) | UInt32(bit)
+                bitOffset += 1
+            }
+            return value
+        }
+
+        mutating func skipBits(_ count: Int) -> Bool {
+            guard count >= 0, totalBits - bitOffset >= count else { return false }
+            bitOffset += count
+            return true
+        }
+
+        mutating func alignToByte() {
+            let remainder = bitOffset & 7
+            if remainder != 0 {
+                bitOffset = min(totalBits, bitOffset + (8 - remainder))
+            }
+        }
+    }
+}
+
 struct FLVAudioTag {
     enum Packet {
         /// AudioSpecificConfig
         case sequenceHeader(Data)
         case raw(Data)
+        /// 仅含 ID_FIL / ID_DSE 等元数据、不含音频声道元素的非音频包
+        case metadata(Data)
     }
 
     let packet: Packet
@@ -266,9 +363,12 @@ struct FLVAudioTag {
         let bodyStart = payload.index(base, offsetBy: 2)
         let body = payload[bodyStart..<payload.endIndex]
         switch payload[payload.index(after: base)] {
-        case 0: packet = .sequenceHeader(body)
-        case 1: packet = .raw(body)
-        default: return nil
+        case 0:
+            packet = .sequenceHeader(body)
+        case 1:
+            packet = AACRawDataBlock.containsAudioElement(body) ? .raw(body) : .metadata(body)
+        default:
+            return nil
         }
     }
 }

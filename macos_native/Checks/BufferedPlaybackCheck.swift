@@ -319,5 +319,59 @@ struct BufferedPlaybackCheck {
         let parsedAudio = FLVAudioTag(payload: prefixedAudio[1..<prefixedAudio.endIndex])
         precondition(parsedAudio != nil)
         print("PASS: timeline restart keeps buffered duration monotonic, popBatch works, and non-zero Data slices parse safely")
+
+        // Non-audio AAC raw_data_block metadata packets (ID_FIL / ID_DSE without audio elements)
+        // must be classified as .metadata and dropped before buffering or timeline accounting.
+        // Exact ISO/IEC 14496-3 ID_FIL + ID_END payload matching Douyu's 128-byte watermark tag:
+        // 110 (ID_FIL=6) | 1111 (cnt=15) | 01101111 (esc=111 => 125 bytes) | 125 payload bytes | 111 (ID_END=7) | 000000
+        var douyuStyleFIL = Data([0xDE, 0xDE])
+        douyuStyleFIL.append(Data(repeating: 0x44, count: 124))
+        douyuStyleFIL.append(contentsOf: [0xFB, 0xC0])
+        precondition(douyuStyleFIL.count == 128)
+        precondition(!AACRawDataBlock.containsAudioElement(douyuStyleFIL))
+        // ID_FIL with cnt=15, esc=0 (count = 14 bytes) followed by ID_END at bit 127.
+        var filEscZero = Data([0xDE, 0x00])
+        filEscZero.append(Data(repeating: 0x00, count: 13))
+        filEscZero.append(contentsOf: [0x01, 0xC0])
+        precondition(!AACRawDataBlock.containsAudioElement(filEscZero))
+        // Empty and ID_END-only packets have no audio elements.
+        precondition(!AACRawDataBlock.containsAudioElement(Data()))
+        precondition(!AACRawDataBlock.containsAudioElement(Data([0xE0])))
+        // Truncated ID_FIL / ID_DSE packets must safely return false without crashing.
+        precondition(!AACRawDataBlock.containsAudioElement(Data([0xDE])))
+        precondition(!AACRawDataBlock.containsAudioElement(Data([0x80, 0x10])))
+        // ID_DSE (4 = 100) | inst=0 (0000) | align=1 (1) | count=2 (00000010) | 2 bytes | ID_END (111)
+        let dseAlignedOnly = Data([0x81, 0x02, 0xAA, 0xBB, 0xE0])
+        precondition(!AACRawDataBlock.containsAudioElement(dseAlignedOnly))
+        // ID_FIL (1 byte -> bitOffset=15) + ID_DSE (align=1 -> skips 1 pad bit at bitOffset=31) + 1 byte + ID_END / ID_CPE.
+        precondition(!AACRawDataBlock.containsAudioElement(Data([0xC2, 0x01, 0x02, 0x02, 0xAA, 0xE0])))
+        precondition(AACRawDataBlock.containsAudioElement(Data([0xC2, 0x01, 0x02, 0x02, 0xAA, 0x20])))
+        // ID_DSE (4 = 100) | inst=0 (0000) | align=0 (0) | count=1 (00000001) | 1 byte | ID_SCE (000)
+        let dseFollowedByAudio = Data([0x80, 0x01, 0x55, 0x00])
+        precondition(AACRawDataBlock.containsAudioElement(dseFollowedByAudio))
+        // ID_FIL (6 = 110) | cnt=1 (0001) | 1 byte (0xAA) | ID_CPE (001)
+        // bits: 110 0001 10101010 001 00000 -> 0xC3, 0x54, 0x20
+        let filFollowedByAudio = Data([0xC3, 0x54, 0x20])
+        precondition(AACRawDataBlock.containsAudioElement(filFollowedByAudio))
+        // Normal mono (ID_SCE=0) and stereo (ID_CPE=1) AAC frames.
+        precondition(AACRawDataBlock.containsAudioElement(Data([0x01, 0x40, 0x20])))
+        precondition(AACRawDataBlock.containsAudioElement(Data([0x21, 0x10, 0x05])))
+        // FLVAudioTag must classify metadata packets as .metadata even on non-zero Data slices.
+        var douyuTagPayload = Data([0x99, 0xAF, 0x01])
+        douyuTagPayload.append(douyuStyleFIL)
+        let douyuTag = FLVAudioTag(payload: douyuTagPayload[1..<douyuTagPayload.endIndex])
+        if case .metadata? = douyuTag?.packet {} else {
+            fatalError("Douyu ID_FIL-only AAC packet was not classified as metadata")
+        }
+        // LiveTagBuffer must drop non-audio AAC metadata tags even when their timestamp regresses to 0.
+        let metadataFilter = LiveTagBuffer()
+        try await metadataFilter.append(tag(10_000, header: true))
+        try await metadataFilter.append(tag(10_000, key: true))
+        try await metadataFilter.append(FLVTag(type: .audio, timestamp: 0, payload: Data(douyuTagPayload[1..<douyuTagPayload.endIndex])))
+        try await metadataFilter.append(tag(11_000))
+        let filteredSnap = await metadataFilter.snapshot()
+        precondition(filteredSnap.count == 3 && filteredSnap.seconds == 1.0 && filteredSnap.lastTimestamp == 11_000,
+                     "Non-audio AAC metadata tag polluted LiveTagBuffer: count=\(filteredSnap.count) seconds=\(filteredSnap.seconds)")
+        print("PASS: non-audio AAC ID_FIL/ID_DSE metadata packets are filtered without dropping valid audio frames")
     }
 }

@@ -1179,6 +1179,11 @@ final class FLVLivePlayer {
             }
             context.audioFormat = try parsed.makeFormatDescription()
 
+        case .metadata:
+            // 非音频元数据负载（如仅含 ID_FIL / ID_DSE 的水印信息）不产生活动样本，
+            // 不能送入音频解码器，也不能推进合成 PTS 或影响时间戳回退检测。
+            return
+
         case .raw(let frame):
             guard let format = context.audioFormat, context.didReceiveKeyframe, !frame.isEmpty else { return }
             if let through = context.dropAudioThrough {

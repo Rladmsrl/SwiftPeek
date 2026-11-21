@@ -58,6 +58,7 @@ actor LiveTagBuffer {
     func append(_ tag: FLVTag) async throws {
         try Task.checkCancellation()
         guard tag.type != .script else { return }
+        if tag.type == .audio, case .metadata? = FLVAudioTag(payload: tag.payload)?.packet { return }
         guard tag.payload.count <= Self.maximumBytes else { throw LivePlayerError.network("直播分块过大") }
         if !started {
             if tag.type == .video {
