@@ -18,7 +18,9 @@ struct MacReplayView: View {
     @State private var pointerActive = true
     @State private var showingDanmakuSettings = false
     @State private var hideTask: Task<Void, Never>?
+    @State private var listRefreshTask: Task<Void, Never>?
     @State private var followDanmaku = true
+    @State private var windowOccluded = false
     @State private var window: NSWindow?
     @Environment(AppSettings.self) private var settings
     @Environment(\.openWindow) private var openWindow
@@ -71,6 +73,7 @@ struct MacReplayView: View {
         .background(WindowReader { resolved in
             window = resolved
             resolved?.isReleasedWhenClosed = false
+            windowOccluded = resolved.map { !$0.occlusionState.contains(.visible) } ?? false
             player.onPiPRestore = { [weak resolved] in
                 resolved?.deminiaturize(nil)
                 resolved?.makeKeyAndOrderFront(nil)
@@ -79,6 +82,10 @@ struct MacReplayView: View {
         .task { start() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { notification in
             if let closing = notification.object as? NSWindow, closing === window { close() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeOcclusionStateNotification)) { notification in
+            guard let changed = notification.object as? NSWindow, changed === window else { return }
+            windowOccluded = !changed.occlusionState.contains(.visible)
         }
         // 外部链接统一交给主窗口处理
         .onOpenURL { MacExternalLinks.deliver($0) }
@@ -90,13 +97,16 @@ struct MacReplayView: View {
             guard list == nil, let id, !id.isEmpty else { return }
             let store = ReplayListStore(roomID: id)
             list = store
-            Task { await store.refresh() }
+            listRefreshTask?.cancel()
+            listRefreshTask = Task { await store.refresh() }
         }
-        .onChange(of: settings.data.danmakuVisibleByDefault) { _, value in session.isDanmakuVisible = value }
+        .onChange(of: settings.danmakuVisibleByDefault) { _, value in session.isDanmakuVisible = value }
         .background { shortcuts }
     }
 
     private func close() {
+        listRefreshTask?.cancel()
+        listRefreshTask = nil
         MacSessionRegistry.unregister(session)
         session.close()
     }
@@ -106,8 +116,10 @@ struct MacReplayView: View {
         MacSessionRegistry.register(session)
         if let hashID = route.hashID { session.open(hashID: hashID, start: route.start) }
         guard let list else { return }
-        Task {
+        listRefreshTask?.cancel()
+        listRefreshTask = Task {
             await list.refresh()
+            guard !Task.isCancelled else { return }
             // 从直播间进来：默认选中最新一场，等用户点播放
             if route.hashID == nil, session.hashID == nil, let first = list.shows.first?.videos.first {
                 session.open(hashID: first.hashID, autoplay: false)
@@ -128,7 +140,7 @@ struct MacReplayView: View {
             if let feed = session.feed {
                 ObservationScope {
                     DanmakuOverlay(messages: feed.messages, settings: settings.danmakuSettings,
-                                   isVisible: session.isDanmakuVisible && !player.isPiPActive,
+                                   isVisible: session.isDanmakuVisible && !player.isPiPActive && !windowOccluded,
                                    clearToken: feed.clearToken, isPaused: !player.isPlaying)
                 }
                 .id(session.hashID)
@@ -407,7 +419,7 @@ struct MacReplayView: View {
                     }.padding(14)
                 }.scrollIndicators(.hidden)
                     .onChange(of: recent.last?.id) { _, id in
-                        if followDanmaku, let id { proxy.scrollTo(id, anchor: .bottom) }
+                        if followDanmaku && !windowOccluded, let id { proxy.scrollTo(id, anchor: .bottom) }
                     }
             }
             Toggle("跟随播放进度", isOn: $followDanmaku).toggleStyle(.checkbox)

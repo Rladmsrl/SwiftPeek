@@ -21,6 +21,7 @@ struct MacSettingsView: View {
     @State private var pane: SettingsPane = .general
     @State private var keyword = ""
     @State private var clearHistory = false
+    @State private var showResetConfirm = false
 
     var body: some View {
         // 原生偏好设置窗口：顶部工具栏标签由系统绘制与切换
@@ -45,6 +46,9 @@ struct MacSettingsView: View {
         } message: { Text(privacyError ?? "") }
         .confirmationDialog("清空观看历史、录像进度和诊断日志？", isPresented: $clearHistory) {
             Button("清空", role: .destructive) { clearViewingData() }
+        }
+        .confirmationDialog("恢复全部设置为默认值？", isPresented: $showResetConfirm) {
+            Button("恢复默认", role: .destructive) { settings.resetToDefaults() }
         }
     }
 
@@ -112,8 +116,22 @@ struct MacSettingsView: View {
                 Toggle("默认显示弹幕", isOn: $settings.data.danmakuVisibleByDefault)
                 Text("字体、字号、可见度与画中画弹幕，可在播放页的“弹幕”下拉面板中调整。")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
-                LabeledContent("显示区域") { Slider(value: $settings.data.danmakuAreaRatio, in: 0.2...1) }
-                LabeledContent("滚动速度") { Slider(value: $settings.data.danmakuSpeed, in: 60...240) }
+                LabeledContent("显示区域") {
+                    HStack(spacing: 10) {
+                        Slider(value: $settings.danmakuAreaRatio, in: 0.2...1.0, step: 0.1)
+                        Text("\(Int((settings.danmakuAreaRatio * 100).rounded()))%")
+                            .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                            .frame(width: 38, alignment: .trailing)
+                    }
+                }
+                LabeledContent("滚动速度") {
+                    HStack(spacing: 10) {
+                        Slider(value: $settings.danmakuSpeed, in: 60...260, step: 10)
+                        Text("\(Int(settings.danmakuSpeed))")
+                            .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                            .frame(width: 38, alignment: .trailing)
+                    }
+                }
                 Toggle("文字描边", isOn: $settings.data.danmakuStroke)
             }
             Section("屏蔽词") {
@@ -157,6 +175,9 @@ struct MacSettingsView: View {
                 Button("打开日志文件夹", action: MacDiagnostics.reveal).buttonStyle(.glass)
                 Text("默认关闭。开启后记录房间号、时间和播放状态，仅保存在本机，最多约 8 MB。分享前请检查内容。")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+            Section {
+                Button("恢复默认设置", role: .destructive) { showResetConfirm = true }
             }
         }
     }

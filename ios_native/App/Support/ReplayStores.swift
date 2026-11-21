@@ -14,9 +14,15 @@ struct ReplayRoute: Hashable, Codable {
 
 // MARK: - 观看进度
 
-/// 记住每段录像看到哪里，下次打开接着看。只存最近 300 段。
 @MainActor
 @Observable
+private final class ReplayProgressEntryBox {
+    var entry: ReplayProgressStore.Entry?
+    init(_ entry: ReplayProgressStore.Entry? = nil) { self.entry = entry }
+}
+
+/// 记住每段录像看到哪里，下次打开接着看。只存最近 300 段。
+@MainActor
 final class ReplayProgressStore {
     static let shared = ReplayProgressStore()
 
@@ -28,45 +34,67 @@ final class ReplayProgressStore {
 
     private static let storageKey = "replay.progress.v1"
     private static let limit = 300
-    private(set) var entries: [String: Entry] = [:]
+    private var storage: [String: Entry] = [:]
+    private var boxes: [String: ReplayProgressEntryBox] = [:]
     private let defaults: UserDefaults
+
+    var entries: [String: Entry] { storage }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         if let raw = defaults.data(forKey: Self.storageKey),
            let decoded = try? JSONDecoder().decode([String: Entry].self, from: raw) {
-            entries = decoded
+            storage = decoded
         }
     }
 
+    private func box(for hashID: String) -> ReplayProgressEntryBox {
+        if let existing = boxes[hashID] { return existing }
+        let created = ReplayProgressEntryBox(storage[hashID])
+        boxes[hashID] = created
+        return created
+    }
+
     func clear() {
-        entries.removeAll()
+        storage.removeAll()
+        for entryBox in boxes.values { entryBox.entry = nil }
         defaults.removeObject(forKey: Self.storageKey)
     }
 
     /// 可续播的位置。开头或已看完的不算。
     func resumePosition(for hashID: String) -> TimeInterval? {
-        entries[hashID]?.position
+        box(for: hashID).entry?.position
     }
 
     func fraction(for hashID: String) -> Double? {
-        guard let entry = entries[hashID], entry.duration > 0 else { return nil }
+        guard let entry = box(for: hashID).entry, entry.duration > 0 else { return nil }
         return min(1, entry.position / entry.duration)
     }
 
     func record(hashID: String, position: TimeInterval, duration: TimeInterval) {
         guard duration > 0, position.isFinite else { return }
         if position < 15 || position > duration - 30 {
-            guard entries[hashID] != nil else { return }
-            entries[hashID] = nil
+            guard storage[hashID] != nil else { return }
+            storage[hashID] = nil
+            boxes[hashID]?.entry = nil
         } else {
-            entries[hashID] = Entry(position: position, duration: duration, updatedAt: Date())
+            if let existing = storage[hashID],
+               Int(existing.position) == Int(position),
+               Int(existing.duration) == Int(duration) {
+                return
+            }
+            let updated = Entry(position: position, duration: duration, updatedAt: Date())
+            storage[hashID] = updated
+            boxes[hashID]?.entry = updated
         }
-        if entries.count > Self.limit {
-            let stale = entries.sorted { $0.value.updatedAt < $1.value.updatedAt }.prefix(entries.count - Self.limit)
-            stale.forEach { entries[$0.key] = nil }
+        if storage.count > Self.limit {
+            let stale = storage.sorted { $0.value.updatedAt < $1.value.updatedAt }.prefix(storage.count - Self.limit)
+            for (key, _) in stale {
+                storage[key] = nil
+                boxes[key]?.entry = nil
+            }
         }
-        if let raw = try? JSONEncoder().encode(entries) {
+        if let raw = try? JSONEncoder().encode(storage) {
             defaults.set(raw, forKey: Self.storageKey)
         }
     }
@@ -87,6 +115,7 @@ final class ReplayListStore {
     private var page = 1
     private var hasMore = true
     private var generation = 0
+    @ObservationIgnored private var loadMoreTask: Task<Void, Never>?
 
     init(roomID: String, service: DouyuReplayService = DouyuReplayService()) {
         self.roomID = roomID
@@ -95,6 +124,9 @@ final class ReplayListStore {
 
     func refresh() async {
         generation += 1
+        loadMoreTask?.cancel()
+        loadMoreTask = nil
+        isLoadingMore = false
         let token = generation
         phase = .loading
         do {
@@ -108,8 +140,15 @@ final class ReplayListStore {
             page = 1
             hasMore = result.hasMore
             phase = .loaded
+        } catch is CancellationError {
+            guard token == generation else { return }
+            phase = shows.isEmpty ? .idle : .loaded
         } catch {
             guard token == generation else { return }
+            if Task.isCancelled {
+                phase = shows.isEmpty ? .idle : .loaded
+                return
+            }
             phase = .failed(error.localizedDescription)
         }
     }
@@ -118,19 +157,29 @@ final class ReplayListStore {
         guard hasMore, !isLoadingMore, phase == .loaded, let author,
               let index = shows.firstIndex(of: show), index >= shows.count - 3 else { return }
         isLoadingMore = true
-        defer { isLoadingMore = false }
         let token = generation
-        do {
-            let result = try await service.replays(upID: author.upID, page: page + 1)
-            guard token == generation else { return }
-            page += 1
-            let existing = Set(shows.map(\.showID))
-            shows.append(contentsOf: result.shows.filter { !existing.contains($0.showID) })
-            hasMore = result.hasMore
-        } catch {
-            guard token == generation else { return }
-            hasMore = false
+        let nextPage = page + 1
+        let task = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if token == self.generation {
+                    self.isLoadingMore = false
+                    self.loadMoreTask = nil
+                }
+            }
+            do {
+                let result = try await self.service.replays(upID: author.upID, page: nextPage)
+                guard token == self.generation, !Task.isCancelled else { return }
+                self.page = nextPage
+                let existing = Set(self.shows.map(\.showID))
+                self.shows.append(contentsOf: result.shows.filter { !existing.contains($0.showID) })
+                self.hasMore = result.hasMore
+            } catch {
+                // 瞬时错误或取消不锁死 hasMore
+            }
         }
+        loadMoreTask = task
+        await task.value
     }
 }
 
@@ -161,6 +210,7 @@ final class ReplaySession {
     private var settings: AppSettings?
     private var generation = 0
     private var operation: Task<Void, Never>?
+    private var extrasTasks: [Task<Void, Never>] = []
     private var recoveries = 0
     private var lastSaved = Date.distantPast
     private var closed = false
@@ -180,12 +230,12 @@ final class ReplaySession {
         player.danmakuSnapshot = { [weak self, weak settings] in
             guard let self, let settings else { return PiPDanmakuSnapshot() }
             return PiPDanmakuSnapshot(messages: self.feed?.messages ?? [], settings: settings.danmakuSettings,
-                                      isVisible: settings.data.pictureInPictureDanmaku && self.isDanmakuVisible,
+                                      isVisible: settings.pictureInPictureDanmaku && self.isDanmakuVisible,
                                       isPaused: !self.player.isPlaying, clearToken: self.feed?.clearToken ?? 0,
                                       sourceID: self.hashID ?? "")
         }
-        player.volume = settings.data.playerVolume
-        isDanmakuVisible = settings.data.danmakuVisibleByDefault
+        player.volume = settings.playerVolume
+        isDanmakuVisible = settings.danmakuVisibleByDefault
     }
 
     var currentQuality: DouyuReplayQuality? {
@@ -215,6 +265,7 @@ final class ReplaySession {
         generation += 1
         let token = generation
         operation?.cancel()
+        cancelExtras()
         feed?.stop()
         heat.stop()
         self.hashID = hashID
@@ -253,7 +304,7 @@ final class ReplaySession {
             phase = .failed("这段录像暂时没有可播放的地址")
             return
         }
-        let savedPosition = settings?.data.historyEnabled == true
+        let savedPosition = settings?.historyEnabled == true
             ? ReplayProgressStore.shared.resumePosition(for: source.detail.hashID) : nil
         let position = start ?? savedPosition ?? 0
         player.load(url: url, at: position, autoplay: autoplay)
@@ -261,21 +312,27 @@ final class ReplaySession {
         LiveDiagnostics.record("replay.open", fields: ["quality": quality.key, "start": String(Int(position))])
     }
 
+    private func cancelExtras() {
+        extrasTasks.forEach { $0.cancel() }
+        extrasTasks.removeAll()
+    }
+
     /// 章节、分段、热度曲线都是锦上添花，失败不影响播放
     private func loadExtras(for detail: DouyuReplayDetail, token: Int) {
+        cancelExtras()
         let hashID = detail.hashID
         let service = self.service
-        Task { [weak self] in
+        extrasTasks.append(Task { [weak self] in
             let chapters = (try? await service.chapters(hashID: hashID)) ?? []
             guard let self, self.isCurrent(token) else { return }
             self.chapters = chapters
-        }
+        })
         if !segments.contains(where: { $0.hashID == hashID }), !detail.upID.isEmpty {
-            Task { [weak self] in
+            extrasTasks.append(Task { [weak self] in
                 let segments = (try? await service.segments(hashID: hashID, upID: detail.upID)) ?? []
                 guard let self, self.isCurrent(token) else { return }
                 self.segments = segments
-            }
+            })
         }
         heat.start(duration: detail.duration) { start in
             try await service.danmaku(hashID: hashID, from: start)
@@ -285,8 +342,8 @@ final class ReplaySession {
     private func preferredQualityIndex() -> Int {
         guard let settings, !qualities.isEmpty else { return 0 }
         let names = qualities.map(\.name)
-        let index = settings.data.qualityPreference.index(
-            in: qualities.count, lastQualityName: settings.data.lastQualityName, names: names
+        let index = settings.qualityPreference.index(
+            in: qualities.count, lastQualityName: settings.lastQualityName, names: names
         )
         return min(max(index, 0), qualities.count - 1)
     }
@@ -312,6 +369,7 @@ final class ReplaySession {
     private func recover(_ message: String) {
         guard let hashID, let detail, recoveries < 2, !closed else { return }
         recoveries += 1
+        operation?.cancel()
         let token = generation
         let position = player.displayTime
         let key = currentQuality?.key
@@ -349,7 +407,7 @@ final class ReplaySession {
     }
 
     private func saveProgress(force: Bool) {
-        guard settings?.data.historyEnabled == true else { return }
+        guard settings?.historyEnabled == true else { return }
         guard let hashID, duration > 0, player.state != .loading, player.state != .idle else { return }
         guard force || Date().timeIntervalSince(lastSaved) > 5 else { return }
         lastSaved = Date()
@@ -364,10 +422,12 @@ final class ReplaySession {
     func close() {
         guard !closed else { return }
         saveProgress(force: true)
-        settings?.data.playerVolume = player.volume
+        settings?.playerVolume = player.volume
         closed = true
         generation += 1
         operation?.cancel()
+        operation = nil
+        cancelExtras()
         feed?.stop()
         heat.stop()
         player.shutdown()

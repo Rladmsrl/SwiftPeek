@@ -195,6 +195,8 @@ struct PlayerGestureSurface: View {
     /// 本次拖动锁定的调节类型。一次拖动只调一个量，
     /// 避免手指斜着滑时亮度和音量同时乱跳。
     @State private var activeKind: PlayerHUD.Kind?
+    /// 起手偏横向时拒绝本次拖动，避免斜滑中段突然接管亮度 / 音量。
+    @State private var dragRejected = false
     @State private var startValue: Double = 0
     /// 手势被识别那一刻已累积的位移。后续增量要从这里算起，
     /// 否则识别成功的瞬间数值会先跳一格（minimumDistance 那 8pt 会被算进去）。
@@ -223,9 +225,13 @@ struct PlayerGestureSurface: View {
                 guard !isLocked, size.height > 0 else { return }
 
                 if activeKind == nil {
+                    guard !dragRejected else { return }
                     let t = value.translation
-                    // 纵向分量明显占优才认定为调节手势
-                    guard abs(t.height) > abs(t.width) else { return }
+                    // 纵向分量明显占优才认定为调节手势；起手横向则整次拖动忽略
+                    guard abs(t.height) > abs(t.width) else {
+                        dragRejected = true
+                        return
+                    }
                     let isLeftHalf = value.startLocation.x < size.width / 2
                     let kind: PlayerHUD.Kind = isLeftHalf ? .brightness : .volume
                     activeKind = kind
@@ -248,6 +254,7 @@ struct PlayerGestureSurface: View {
             }
             .onEnded { _ in
                 activeKind = nil
+                dragRejected = false
                 scheduleHUDDismiss()
             }
     }

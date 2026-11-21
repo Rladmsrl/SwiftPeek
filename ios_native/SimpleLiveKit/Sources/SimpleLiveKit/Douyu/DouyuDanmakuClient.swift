@@ -100,10 +100,13 @@ public actor DouyuDanmakuClient: LiveDanmakuClient {
             case "chatmsg":
                 // dms 缺失的是异常弹幕，Dart 版同样直接丢弃
                 guard value.has("dms") else { continue }
+                lazy var flat = DouyuSTT.flatFields(raw)
+                let userName = value.string("nn") ?? flat["nn"] ?? ""
+                let text = value.string("txt") ?? flat["txt"] ?? ""
                 let message = LiveMessage(
                     kind: .chat,
-                    userName: value.string("nn") ?? "",
-                    message: value.string("txt") ?? "",
+                    userName: userName,
+                    message: text,
                     color: Self.color(for: value.int("col") ?? 0)
                 )
                 continuation.yield(.message(message))

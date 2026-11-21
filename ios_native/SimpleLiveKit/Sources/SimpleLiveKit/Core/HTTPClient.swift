@@ -150,9 +150,14 @@ public actor HTTPClient {
                 throw LiveCoreError("\(label)请求失败", statusCode: http.statusCode)
             }
             return data
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as URLError where error.code == .cancelled || Task.isCancelled {
+            throw CancellationError()
         } catch let error as LiveCoreError {
             throw error
         } catch {
+            if Task.isCancelled { throw CancellationError() }
             throw LiveCoreError("\(label)请求失败：\(error.localizedDescription)")
         }
     }

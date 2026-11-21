@@ -45,6 +45,14 @@ final class RemoteImageCache: @unchecked Sendable {
     static let shared = RemoteImageCache()
     private let images = NSCache<NSString, CGImage>()
     private let session: URLSession
+    private let flightLock = NSLock()
+    private var inFlight: [RemoteImageKey: Flight] = [:]
+
+    private final class Flight {
+        let task: Task<CGImage, Error>
+        var waiters = 0
+        init(task: Task<CGImage, Error>) { self.task = task }
+    }
 
     init() {
         images.totalCostLimit = 48 * 1024 * 1024
@@ -58,17 +66,63 @@ final class RemoteImageCache: @unchecked Sendable {
 
     func cached(_ key: RemoteImageKey) -> CGImage? { images.object(forKey: key.name as NSString) }
 
-    /// 在调用方之外的执行器上下载与解码，不占主线程。
+    /// 在调用方之外的执行器上下载与解码，不占主线程；相同 key 的并发请求合并为一次。
     func image(for key: RemoteImageKey) async throws -> CGImage {
         if let hit = cached(key) { return hit }
-        let (data, response) = try await session.data(from: key.url)
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            throw URLError(.badServerResponse)
+        let flight: Flight
+        flightLock.lock()
+        if let existing = inFlight[key] {
+            existing.waiters += 1
+            flight = existing
+            flightLock.unlock()
+        } else {
+            let session = self.session
+            let images = self.images
+            let createdTask = Task<CGImage, Error> { [weak self] in
+                defer { self?.finishFlight(for: key) }
+                let (data, response) = try await session.data(from: key.url)
+                if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                    throw URLError(.badServerResponse)
+                }
+                try Task.checkCancellation()
+                guard let image = Self.thumbnail(data, maxPixels: key.pixels) else {
+                    throw URLError(.cannotDecodeContentData)
+                }
+                images.setObject(image, forKey: key.name as NSString, cost: image.bytesPerRow * image.height)
+                return image
+            }
+            let created = Flight(task: createdTask)
+            created.waiters = 1
+            inFlight[key] = created
+            flight = created
+            flightLock.unlock()
         }
-        try Task.checkCancellation()
-        guard let image = Self.thumbnail(data, maxPixels: key.pixels) else { throw URLError(.cannotDecodeContentData) }
-        images.setObject(image, forKey: key.name as NSString, cost: image.bytesPerRow * image.height)
-        return image
+        return try await withTaskCancellationHandler {
+            let image = try await flight.task.value
+            try Task.checkCancellation()
+            return image
+        } onCancel: {
+            self.leaveFlight(for: key, flight: flight)
+        }
+    }
+
+    private func finishFlight(for key: RemoteImageKey) {
+        flightLock.lock()
+        inFlight.removeValue(forKey: key)
+        flightLock.unlock()
+    }
+
+    private func leaveFlight(for key: RemoteImageKey, flight: Flight) {
+        flightLock.lock()
+        guard inFlight[key] === flight else {
+            flightLock.unlock()
+            return
+        }
+        flight.waiters -= 1
+        let shouldCancel = flight.waiters <= 0
+        if shouldCancel { inFlight.removeValue(forKey: key) }
+        flightLock.unlock()
+        if shouldCancel { flight.task.cancel() }
     }
 
     private static func thumbnail(_ data: Data, maxPixels: Int) -> CGImage? {
@@ -126,7 +180,12 @@ struct RemoteImage<Content: View, Placeholder: View>: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onGeometryChange(for: CGFloat.self) { max($0.size.width, $0.size.height) } action: { points = $0 }
         .task(id: key) {
-            guard let key, RemoteImageCache.shared.cached(key) == nil else { return }
+            guard let key else { return }
+            if let hit = RemoteImageCache.shared.cached(key) {
+                // 把缓存命中同步到局部状态，避免 NSCache 在内存压力下回收后可见视图长期空白
+                if loaded?.url != url { loaded = Loaded(url: url, image: hit) }
+                return
+            }
             // 已有同一地址、足够大的图（例如窗口缩小）就不再重新解码
             if let loaded, loaded.url == url, max(loaded.image.width, loaded.image.height) >= key.pixels { return }
             let url = url
@@ -245,7 +304,7 @@ struct RoomCard: View {
                 Spacer(minLength: 4)
                 if let watchedAt {
                     Text(watchedAt, style: .relative).lineLimit(1)
-                } else if settings.data.showHotBadge, room.online > 0 {
+                } else if settings.showHotBadge, room.online > 0 {
                     Label(Theme.formatHot(room.online), systemImage: "flame")
                         .labelStyle(CompactLabelStyle())
                         .monospacedDigit()
@@ -328,21 +387,35 @@ struct LiveDot: View {
     @State private var pulsing = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    private var shouldPulse: Bool { pulses && !reduceMotion }
+
     var body: some View {
         Circle()
             .fill(Theme.accent)
             .frame(width: size, height: size)
             .background {
-                Circle()
-                    .stroke(Theme.accent.opacity(0.6), lineWidth: 1)
-                    .scaleEffect(pulsing ? 2.4 : 1)
-                    .opacity(pulsing ? 0 : 0.9)
+                if shouldPulse {
+                    Circle()
+                        .stroke(Theme.accent.opacity(0.6), lineWidth: 1)
+                        .scaleEffect(pulsing ? 2.4 : 1)
+                        .opacity(pulsing ? 0 : 0.9)
+                }
             }
-            .onAppear {
-                guard pulses, !reduceMotion else { return }
-                withAnimation(.easeOut(duration: 1.8).repeatForever(autoreverses: false)) { pulsing = true }
-            }
+            .onAppear { syncPulse() }
+            .onDisappear { pulsing = false }
+            .onChange(of: shouldPulse) { syncPulse() }
             .accessibilityLabel("直播中")
+    }
+
+    private func syncPulse() {
+        guard shouldPulse else {
+            pulsing = false
+            return
+        }
+        pulsing = false
+        withAnimation(.easeOut(duration: 1.8).repeatForever(autoreverses: false)) {
+            pulsing = true
+        }
     }
 }
 
@@ -563,7 +636,7 @@ struct PhaseStateView: View {
         case .loading where isEmpty:
             ProgressView()
                 .frame(maxWidth: .infinity, minHeight: 220)
-        case .failed(let message):
+        case .failed(let message) where isEmpty:
             ContentUnavailableView {
                 Label("加载失败", systemImage: "wifi.exclamationmark")
             } description: {
@@ -572,6 +645,21 @@ struct PhaseStateView: View {
                 Button("重试", action: retry)
                     .buttonStyle(.bordered)
             }
+        case .failed(let message):
+            HStack(spacing: 10) {
+                Image(systemName: "wifi.exclamationmark")
+                    .foregroundStyle(.secondary)
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                Spacer(minLength: 8)
+                Button("重试", action: retry)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
         case .loaded where isEmpty:
             ContentUnavailableView(emptyText, systemImage: "tray")
         default:

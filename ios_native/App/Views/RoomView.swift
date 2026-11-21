@@ -14,7 +14,7 @@ struct RoomView: View {
     private var player: FLVLivePlayer { playback.player }
     @State private var pipBox = LazyViewObject<PiPController>()
     private var pip: PiPController { pipBox { PiPController() } }
-    @State private var isPiPActive = false
+    private var isPiPActive: Bool { playback.isPictureInPictureActive }
     /// 进入房间时所在的 Tab。用于区分「切 Tab（界面被盖住）」与
     /// 「真正离开房间（返回上一页）」——两者都会触发 onDisappear。
     @State private var homeTab: AppTab?
@@ -154,12 +154,12 @@ struct RoomView: View {
             playback.close()
             pip.detach()
         }
-        .onChange(of: settings.data.autoPictureInPicture) { configurePiP() }
+        .onChange(of: settings.autoPictureInPicture) { configurePiP() }
         .onChange(of: multiWatch.isPresented) { _, presented in
             if presented { pip.detach() } else { configurePiP() }
         }
         .onChange(of: store.isDanmakuVisible) { pip.refreshDanmaku() }
-        .onChange(of: settings.data.backgroundAudio) { _, enabled in
+        .onChange(of: settings.backgroundAudio) { _, enabled in
             if !multiWatch.owns(playback) { playback.setBackgroundAudio(enabled) }
         }
         .onChange(of: player.state) { pip.invalidatePlaybackState() }
@@ -710,21 +710,22 @@ struct RoomView: View {
 
     private func configurePiP() {
         guard !multiWatch.owns(playback) else { return }
-        pip.attach(player: player, automatic: settings.data.autoPictureInPicture, settings: settings)
-        pip.danmakuSnapshot = { [weak playback, weak settings] in
-            guard let playback, let settings else { return PiPDanmakuSnapshot() }
-            let store = playback.store
+        let session = playback
+        session.player.onAudioRouteLost = { [weak session] in session?.stopPlayback() }
+        pip.attach(player: session.player, automatic: settings.autoPictureInPicture, settings: settings)
+        pip.danmakuSnapshot = { [weak session, weak settings] in
+            guard let session, let settings else { return PiPDanmakuSnapshot() }
+            let store = session.store
             return PiPDanmakuSnapshot(messages: store.messages, settings: settings.danmakuSettings,
-                                      isVisible: settings.data.pictureInPictureDanmaku && store.isDanmakuVisible,
-                                      isPaused: !playback.playbackRequested, frameRevision: playback.player.pipFrames.revision,
+                                      isVisible: settings.pictureInPictureDanmaku && store.isDanmakuVisible,
+                                      isPaused: !session.playbackRequested, frameRevision: session.player.pipFrames.revision,
                                       sourceID: store.roomID)
         }
-        pip.onRequestPlay = { playback.play() }
-        pip.onRequestPause = { playback.stopPlayback() }
-        pip.isPlaybackRequested = { playback.playbackRequested }
-        pip.onStateChange = { active in
-            isPiPActive = active
-            playback.setPictureInPictureActive(active)
+        pip.onRequestPlay = { [weak session] in session?.play() }
+        pip.onRequestPause = { [weak session] in session?.stopPlayback() }
+        pip.isPlaybackRequested = { [weak session] in session?.playbackRequested ?? false }
+        pip.onStateChange = { [weak session] active in
+            session?.setPictureInPictureActive(active)
         }
     }
 
@@ -733,7 +734,6 @@ struct RoomView: View {
         let additions = pendingRooms
         pendingRooms = []
         pip.detach()
-        isPiPActive = false
         playback.setPictureInPictureActive(false)
         multiWatch.begin(from: playback, id: store.detail?.roomID ?? roomID,
                          title: store.detail?.userName ?? fallbackTitle)

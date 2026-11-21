@@ -58,7 +58,7 @@ public struct DouyuSTT: Sendable {
                 let key = tokens[0]
                 // 重新拼回剩余部分，避免值中意外出现 "@=" 时丢数据
                 let value = unescape(tokens[1...].joined(separator: "@="))
-                result[key] = value.contains("@=") ? parse(value) : .text(value)
+                result[key] = looksLikeNestedObject(value) ? parse(value) : .text(value)
             }
             return .object(result)
         }
@@ -66,6 +66,29 @@ public struct DouyuSTT: Sendable {
             return parse(unescape(raw))
         }
         return .text(unescape(raw))
+    }
+
+    /// 仅解析顶层 `key@=value/` 字段，不递归嵌套结构。用于读取 `txt` / `nn` 等用户自由文本，
+    /// 避免弹幕正文本身长得像嵌套 STT（如 `a@=1/`）时被误当成对象而丢失正文。
+    public static func flatFields(_ raw: String) -> [String: String] {
+        var result: [String: String] = [:]
+        for field in raw.components(separatedBy: "/") where !field.isEmpty {
+            let tokens = field.components(separatedBy: "@=")
+            guard tokens.count >= 2 else { continue }
+            result[tokens[0]] = unescape(tokens[1...].joined(separator: "@="))
+        }
+        return result
+    }
+
+    private static func looksLikeNestedObject(_ value: String) -> Bool {
+        guard value.contains("@=") else { return false }
+        let parts = value.components(separatedBy: "/").filter { !$0.isEmpty }
+        guard !parts.isEmpty else { return false }
+        return parts.allSatisfy { part in
+            guard let sep = part.range(of: "@=") else { return false }
+            let key = part[..<sep.lowerBound]
+            return !key.isEmpty && key.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") }
+        }
     }
 
     /// 反转义。顺序与 Dart 版一致：先还原 `/`，再还原 `@`

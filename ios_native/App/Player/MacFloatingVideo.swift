@@ -56,6 +56,27 @@ final class MacFloatingVideoController: NSObject, NSWindowDelegate {
 
     func stop() { finish(closeWindow: true) }
 
+    func updateVideoSize(_ size: CGSize?) {
+        guard isActive, let panel, let size, size.width.isFinite, size.height.isFinite,
+              size.width > 0, size.height > 0 else { return }
+        let aspect = FloatingVideoGeometry.aspect(for: size)
+        let currentAspect = panel.contentAspectRatio.height > 0
+            ? panel.contentAspectRatio.width / panel.contentAspectRatio.height
+            : 16 / 9
+        guard abs(aspect - currentAspect) > 0.01 else { return }
+        panel.contentAspectRatio = CGSize(width: aspect, height: 1)
+        let minWidth = min(240, panel.frame.width)
+        panel.contentMinSize = CGSize(width: minWidth, height: minWidth / aspect)
+        let frame = panel.frame
+        let newHeight = max(panel.contentMinSize.height, frame.width / aspect)
+        var updated = CGRect(x: frame.minX, y: frame.maxY - newHeight, width: frame.width, height: newHeight)
+        if let visible = panel.screen?.visibleFrame {
+            if updated.minY < visible.minY { updated.origin.y = visible.minY }
+            if updated.maxY > visible.maxY { updated.origin.y = visible.maxY - updated.height }
+        }
+        panel.setFrame(updated, display: true)
+    }
+
     private func finish(closeWindow: Bool) {
         guard let panel else { return }
         self.panel = nil
@@ -107,14 +128,14 @@ private struct FloatingPlayerView: View {
                     HStack(spacing: 8) {
                         control("xmark", label: "关闭画中画", action: close)
                         Spacer(minLength: 0)
-                        control(settings.data.pictureInPictureDanmaku ? "text.bubble.fill" : "text.bubble",
-                                label: "小窗弹幕", active: settings.data.pictureInPictureDanmaku) {
-                            settings.data.pictureInPictureDanmaku.toggle()
+                        control(settings.pictureInPictureDanmaku ? "text.bubble.fill" : "text.bubble",
+                                label: "小窗弹幕", active: settings.pictureInPictureDanmaku) {
+                            settings.pictureInPictureDanmaku.toggle()
                         }
-                        control(settings.data.floatingWindowOnTop ? "pin.fill" : "pin",
-                                label: settings.data.floatingWindowOnTop ? "取消置顶" : "置顶",
-                                active: settings.data.floatingWindowOnTop) {
-                            settings.data.floatingWindowOnTop.toggle()
+                        control(settings.floatingWindowOnTop ? "pin.fill" : "pin",
+                                label: settings.floatingWindowOnTop ? "取消置顶" : "置顶",
+                                active: settings.floatingWindowOnTop) {
+                            settings.floatingWindowOnTop.toggle()
                         }
                         control("arrow.up.left.and.arrow.down.right", label: "返回播放窗口", action: restore)
                     }
@@ -136,7 +157,7 @@ private struct FloatingPlayerView: View {
         .overlay { RoundedRectangle(cornerRadius: 16).strokeBorder(.white.opacity(0.14), lineWidth: 1).allowsHitTesting(false) }
         .environment(\.colorScheme, .dark)
         .onHover { hovering = $0 }
-        .onChange(of: settings.data.floatingWindowOnTop) { _, value in setPinned(value) }
+        .onChange(of: settings.floatingWindowOnTop) { _, value in setPinned(value) }
     }
 
     private func control(_ symbol: String, label: String, active: Bool = false, action: @escaping () -> Void) -> some View {

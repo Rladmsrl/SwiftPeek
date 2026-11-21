@@ -65,6 +65,17 @@ struct DouyuSTTTests {
         #expect(value.has("garbage") == false)
     }
 
+    @Test("弹幕正文包含 @= 文本时不被误解析为嵌套对象")
+    func atEqualsInPlainChatTextStaysText() {
+        // 观众发送 "hello @= world"，编码为 "hello @A= world"
+        let value = DouyuSTT.parse("type@=chatmsg/nn@=观众/txt@=hello @A= world/dms@=1/")
+        #expect(value.string("txt") == "hello @= world")
+        // 即便观众恰好发了形如 "a@=1/" 的内容，flatFields 也能原样保留顶层字符串
+        let raw = "type@=chatmsg/nn@=观众/txt@=a@A=1@S/dms@=1/"
+        let flat = DouyuSTT.flatFields(raw)
+        #expect(flat["txt"] == "a@=1/")
+    }
+
     @Test("无 dms 字段的异常弹幕可被识别并丢弃")
     func detectsMissingDms() {
         let value = DouyuSTT.parse("type@=chatmsg/nn@=x/txt@=y/")
@@ -164,6 +175,20 @@ struct DouyuSignTests {
         #expect(throws: LiveCoreError.self) {
             _ = try DouyuSign.sign(roomJS: "var x = 1;", roomID: "9999")
         }
+    }
+
+    @Test("复用 JSContext 池后仍保持隔离与确定性")
+    func pooledContextRemainsIsolated() throws {
+        let roomJS = try loadFixture()
+        let baseline = try DouyuSign.sign(roomJS: roomJS, roomID: "9999", timestamp: 1_700_000_000)
+        // 故意先执行一次抛出异常的坏脚本，不应污染池内健康上下文
+        #expect(throws: LiveCoreError.self) {
+            _ = try DouyuSign.sign(roomJS: "throw new Error('boom');", roomID: "9999")
+        }
+        let other = try DouyuSign.sign(roomJS: roomJS, roomID: "12345", timestamp: 1_700_000_001)
+        let again = try DouyuSign.sign(roomJS: roomJS, roomID: "9999", timestamp: 1_700_000_000)
+        #expect(other != baseline)
+        #expect(again == baseline)
     }
 }
 

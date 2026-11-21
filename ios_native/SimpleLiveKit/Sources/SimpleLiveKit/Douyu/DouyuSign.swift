@@ -24,6 +24,8 @@ public struct DouyuSign: Sendable {
         return ""
     }()
 
+    private static let pool = SignContextPool()
+
     /// 执行签名。
     /// - Parameters:
     ///   - roomJS: `homeH5Enc` 下发的混淆脚本
@@ -40,8 +42,19 @@ public struct DouyuSign: Sendable {
         guard !cryptoJSSource.isEmpty else {
             throw LiveCoreError("CryptoJS 资源缺失，无法生成斗鱼签名")
         }
-        guard let context = JSContext() else {
-            throw LiveCoreError("无法创建 JavaScriptCore 上下文")
+
+        // 参数均为纯数字/十六进制串，无注入风险；仍做一次白名单校验
+        let safeRoom = roomID.filter { $0.isNumber }
+        let safeDevice = deviceID.filter { $0.isHexDigit }
+        guard !safeRoom.isEmpty, !safeDevice.isEmpty else {
+            throw LiveCoreError("房间号或设备号非法")
+        }
+
+        let context = try pool.borrow(cryptoJS: cryptoJSSource)
+        var healthy = false
+        defer {
+            context.exceptionHandler = nil
+            if healthy { pool.release(context) }
         }
 
         var jsError: String?
@@ -49,6 +62,53 @@ public struct DouyuSign: Sendable {
             jsError = exception?.toString() ?? "未知 JS 异常"
         }
 
+        // 每次签名在独立闭包内求值，避免不同房间脚本的顶层变量互相污染，同时复用已加载好的 CryptoJS 上下文。
+        let wrapped = """
+        (function() {
+            window.ub98484234 = undefined;
+            \(roomJS)
+            return typeof ub98484234 === 'function'
+                ? ub98484234
+                : (typeof window.ub98484234 === 'function' ? window.ub98484234 : null);
+        })()
+        """
+        let fn = context.evaluateScript(wrapped)
+        if let jsError { throw LiveCoreError("加载斗鱼签名脚本失败：\(jsError)") }
+
+        guard let fn, !fn.isUndefined, !fn.isNull, fn.isObject else {
+            throw LiveCoreError("斗鱼签名脚本未定义 ub98484234，接口可能已变更")
+        }
+
+        let result = fn.call(withArguments: [safeRoom, safeDevice, String(timestamp)])
+        if let jsError { throw LiveCoreError("执行斗鱼签名失败：\(jsError)") }
+
+        guard let signArgs = result?.toString(), signArgs.contains("sign=") else {
+            throw LiveCoreError("斗鱼签名结果异常：\(result?.toString() ?? "nil")")
+        }
+        healthy = true
+        return signArgs
+    }
+}
+
+/// 复用已预热 CryptoJS 的 JSContext，避免每次进房、切画质或 4 分钟换流都冷启 JSC VM 并重解析 47 KB 脚本。
+private final class SignContextPool: @unchecked Sendable {
+    private let lock = NSLock()
+    private var idle: [JSContext] = []
+    private let maxIdle = 2
+
+    func borrow(cryptoJS: String) throws -> JSContext {
+        lock.lock()
+        let cached = idle.popLast()
+        lock.unlock()
+        if let cached { return cached }
+
+        guard let context = JSContext() else {
+            throw LiveCoreError("无法创建 JavaScriptCore 上下文")
+        }
+        var jsError: String?
+        context.exceptionHandler = { _, exception in
+            jsError = exception?.toString() ?? "未知 JS 异常"
+        }
         // CryptoJS 会探测 window / global / self，JavaScriptCore 默认没有这些全局对象
         context.evaluateScript(
             """
@@ -59,30 +119,15 @@ public struct DouyuSign: Sendable {
             var document = {};
             """
         )
-        context.evaluateScript(cryptoJSSource)
+        context.evaluateScript(cryptoJS)
+        context.exceptionHandler = nil
         if let jsError { throw LiveCoreError("加载 CryptoJS 失败：\(jsError)") }
+        return context
+    }
 
-        context.evaluateScript(roomJS)
-        if let jsError { throw LiveCoreError("加载斗鱼签名脚本失败：\(jsError)") }
-
-        guard context.objectForKeyedSubscript("ub98484234")?.isObject == true else {
-            throw LiveCoreError("斗鱼签名脚本未定义 ub98484234，接口可能已变更")
-        }
-
-        // 参数均为纯数字/十六进制串，无注入风险；仍做一次白名单校验
-        let safeRoom = roomID.filter { $0.isNumber }
-        let safeDevice = deviceID.filter { $0.isHexDigit }
-        guard !safeRoom.isEmpty, !safeDevice.isEmpty else {
-            throw LiveCoreError("房间号或设备号非法")
-        }
-
-        let call = "ub98484234('\(safeRoom)','\(safeDevice)','\(timestamp)')"
-        let result = context.evaluateScript(call)
-        if let jsError { throw LiveCoreError("执行斗鱼签名失败：\(jsError)") }
-
-        guard let signArgs = result?.toString(), signArgs.contains("sign=") else {
-            throw LiveCoreError("斗鱼签名结果异常：\(result?.toString() ?? "nil")")
-        }
-        return signArgs
+    func release(_ context: JSContext) {
+        lock.lock()
+        if idle.count < maxIdle { idle.append(context) }
+        lock.unlock()
     }
 }

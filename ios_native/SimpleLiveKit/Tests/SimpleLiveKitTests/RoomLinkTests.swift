@@ -5,7 +5,8 @@ import Testing
 @Suite("外部链接解析")
 struct RoomLinkTests {
     @Test("识别房间号、网页和深链", arguments: [
-        " 74751 ", "https://www.douyu.com/74751?from=search", "douyu://room/74751", "simplelive://room/74751",
+        " 74751 ", "https://www.douyu.com/74751?from=search", "https://www.douyu.com/room/74751",
+        "https://m.douyu.com/room/74751/", "douyu://room/74751", "simplelive://room/74751",
         "https://m.douyu.com/74751/", "http://douyu.com/74751", "SimpleLive://room/74751",
         // 旧版 iOS 支持的形式
         "douyu:74751", "simplelive:74751", "DOUYU:74751", "douyu://74751",
@@ -16,6 +17,7 @@ struct RoomLinkTests {
     func acceptsAlias() {
         #expect(RoomLink.roomID(from: "simplelive://room/abc_1") == "abc_1")
         #expect(RoomLink.roomID(from: "https://www.douyu.com/abc_1") == "abc_1")
+        #expect(RoomLink.roomID(from: "https://www.douyu.com/room/abc_1") == "abc_1")
     }
 
     @Test("搜索词和不可信链接不作为房间号", arguments: [

@@ -204,39 +204,62 @@ final class LibraryStore {
         isRefreshingFollows = true
         defer { isRefreshingFollows = false }
         let startedAt = Date()
-        followsRefreshedAt = startedAt
 
         let ids = follows.map(\.roomID)
-        for id in ids { statusAttemptedAt[id] = startedAt }
         let lookup = statusLookup
         let limit = Self.followStatusConcurrency
-        let results = await withTaskGroup(of: (String, LiveRoomBrief?).self) { group -> [(String, LiveRoomBrief?)] in
+        let results = await withTaskGroup(of: (String, LiveRoomBrief?, Bool).self) { group -> [(String, LiveRoomBrief?, Bool)] in
             var next = 0
             while next < min(limit, ids.count) {
                 let id = ids[next]
                 next += 1
-                group.addTask { (id, try? await lookup(id)) }
+                group.addTask {
+                    if Task.isCancelled { return (id, nil, true) }
+                    do {
+                        return (id, try await lookup(id), false)
+                    } catch is CancellationError {
+                        return (id, nil, true)
+                    } catch {
+                        return (id, nil, Task.isCancelled)
+                    }
+                }
             }
-            var collected: [(String, LiveRoomBrief?)] = []
+            var collected: [(String, LiveRoomBrief?, Bool)] = []
             while let result = await group.next() {
                 collected.append(result)
-                if next < ids.count {
+                if !Task.isCancelled, next < ids.count {
                     let id = ids[next]
                     next += 1
-                    group.addTask { (id, try? await lookup(id)) }
+                    group.addTask {
+                        if Task.isCancelled { return (id, nil, true) }
+                        do {
+                            return (id, try await lookup(id), false)
+                        } catch is CancellationError {
+                            return (id, nil, true)
+                        } catch {
+                            return (id, nil, Task.isCancelled)
+                        }
+                    }
                 }
             }
             return collected
+        }
+
+        // 仅在未被中途取消时标记完整刷新完成；被取消的条目不记入 attempted，
+        // 避免切 Tab 打断刷新后列表被锁在「未知」状态两分钟。
+        if !Task.isCancelled {
+            followsRefreshedAt = startedAt
         }
 
         // 最后一次 await 之后才取当前列表，刷新期间增删的关注不会被覆盖。
         // 按请求时的房间号记录：别名房间返回的是真实房间号，按返回值记就对不上关注项。
         var status = roomStatus
         var updated = follows
-        for (id, brief) in results {
+        for (id, brief, cancelled) in results {
+            if !cancelled { statusAttemptedAt[id] = startedAt }
             guard let brief else { continue }
-            status[id] = brief.status
             guard let position = updated.firstIndex(where: { $0.roomID == id }) else { continue }
+            status[id] = brief.status
             if !brief.title.isEmpty { updated[position].title = brief.title }
             if !brief.userAvatar.isEmpty { updated[position].avatar = brief.userAvatar }
             if !brief.userName.isEmpty { updated[position].userName = brief.userName }

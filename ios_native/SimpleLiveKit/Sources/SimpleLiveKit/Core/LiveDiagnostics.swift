@@ -37,10 +37,17 @@ public enum LiveDiagnostics {
 
     public static func flush() { queue.sync {} }
 
+    private static let urlRegex = try! NSRegularExpression(pattern: #"(?i)https?://[^\s\"<>]+"#)
+    private static let secretRegex = try! NSRegularExpression(pattern: #"(?i)(sign|wsAuth|token|cookie|authorization|did|tt)\s*[=:]\s*[^\s&,;]+"#)
+    private static let pathRegex = try! NSRegularExpression(pattern: #"/(?:Users|home)/[^\s\"<>]+"#)
+
     static func redact(_ value: String) -> String {
-        var text = value.replacingOccurrences(of: #"(?i)https?://[^\s\"<>]+"#, with: "[URL]", options: .regularExpression)
-        text = text.replacingOccurrences(of: #"(?i)(sign|wsAuth|token|cookie|authorization|did|tt)\s*[=:]\s*[^\s&,;]+"#, with: "$1=[redacted]", options: .regularExpression)
-        text = text.replacingOccurrences(of: #"/(?:Users|home)/[^\s\"<>]+"#, with: "[LOCAL_PATH]", options: .regularExpression)
+        let clipped = String(value.prefix(2048))
+        var text = clipped
+        let fullRange = { NSRange(text.startIndex..<text.endIndex, in: text) }
+        text = urlRegex.stringByReplacingMatches(in: text, range: fullRange(), withTemplate: "[URL]")
+        text = secretRegex.stringByReplacingMatches(in: text, range: fullRange(), withTemplate: "$1=[redacted]")
+        text = pathRegex.stringByReplacingMatches(in: text, range: fullRange(), withTemplate: "[LOCAL_PATH]")
         return String(text.prefix(1024))
     }
 }

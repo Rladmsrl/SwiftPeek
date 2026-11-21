@@ -44,6 +44,7 @@ final class PiPController {
     }
 
     func stop() { floating.stop() }
+    func updateVideoSize(_ size: CGSize?) { floating.updateVideoSize(size) }
     func detach() {
         stop()
         player = nil

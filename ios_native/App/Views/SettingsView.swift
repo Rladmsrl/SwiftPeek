@@ -8,6 +8,8 @@ struct SettingsView: View {
     @State private var privacyError: String?
     @State private var newKeyword = ""
     @State private var showResetConfirm = false
+    @State private var showClearViewingConfirm = false
+    @State private var showClearFollowsConfirm = false
 
     var body: some View {
         @Bindable var settings = settings
@@ -96,11 +98,11 @@ struct SettingsView: View {
                     }
                 }
                 Button("清空观看记录与日志", role: .destructive) {
-                    clearViewingData()
+                    showClearViewingConfirm = true
                 }
 
                 Button("清空关注（\(library.follows.count)）", role: .destructive) {
-                    library.clearFollows()
+                    showClearFollowsConfirm = true
                 }
                 .disabled(library.follows.isEmpty)
             } header: {
@@ -131,6 +133,22 @@ struct SettingsView: View {
             titleVisibility: .visible
         ) {
             Button("恢复默认", role: .destructive) { settings.resetToDefaults() }
+            Button("取消", role: .cancel) {}
+        }
+        .confirmationDialog(
+            "清空观看历史、录像续播进度与本地诊断日志？",
+            isPresented: $showClearViewingConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("清空", role: .destructive) { clearViewingData() }
+            Button("取消", role: .cancel) {}
+        }
+        .confirmationDialog(
+            "清空全部 \(library.follows.count) 个关注？此操作无法撤销。",
+            isPresented: $showClearFollowsConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("清空关注", role: .destructive) { library.clearFollows() }
             Button("取消", role: .cancel) {}
         }
     }

@@ -53,7 +53,7 @@ struct MacLibraryView: View {
                     MacCategoryRooms(category: category, open: openRoom)
                 }
                 .toolbar {
-                    if section == .recommend || section == .follows || section == .search {
+                    if section == .recommend || section == .categories || section == .follows || section == .search {
                         ToolbarItem(placement: .primaryAction) {
                             Button(action: refresh) { Label("刷新", systemImage: "arrow.clockwise") }
                                 .keyboardShortcut("r", modifiers: .command)
@@ -292,7 +292,9 @@ struct MacLibraryView: View {
                     .onChange(of: search.scope) { _, _ in search.search() }
                 }
                 if search.scope == .rooms {
-                    MacRoomGrid(rooms: search.rooms, phase: search.phase, open: openRoom, retry: { search.search() })
+                    MacRoomGrid(rooms: search.rooms, phase: search.phase, open: openRoom,
+                                retry: { search.search() },
+                                loadMore: { await search.loadMoreIfNeeded(currentRoom: $0) })
                 } else {
                     PhaseStateView(phase: search.phase, isEmpty: search.anchors.isEmpty, emptyText: "没有找到主播") { search.search() }
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 240, maximum: 360), spacing: 8)], spacing: 4) {
@@ -301,8 +303,12 @@ struct MacLibraryView: View {
                                 AnchorRow(anchor: anchor).padding(10).macHoverFill(radius: 12)
                             }
                             .buttonStyle(PressableStyle())
+                            .task { await search.loadMoreIfNeeded(currentAnchor: anchor) }
                         }
                     }
+                }
+                if search.isLoadingMore {
+                    ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(.top, 8)
                 }
             }
         }
@@ -334,9 +340,14 @@ struct MacLibraryView: View {
         Task {
             switch section {
             case .recommend: await recommend.refresh()
+            case .categories:
+                await categories.load(force: true)
+                if categoryGroup == nil || !categories.categories.contains(where: { $0.id == categoryGroup }) {
+                    categoryGroup = categories.categories.first?.id
+                }
             case .follows: await library.refreshFollowStatus()
             case .search: search.search()
-            case .categories, .history: break
+            case .history: break
             }
         }
     }

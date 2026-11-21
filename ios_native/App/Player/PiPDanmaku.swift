@@ -4,26 +4,24 @@ import SimpleLiveKit
 import Observation
 
 /// Settings can be edited in another tab while the player view is offscreen.
-/// Observe them independently of SwiftUI's view update/lifecycle callbacks.
-/// `data` is one stored struct, so any settings write wakes the tracker; only an
-/// actual change of this preference may reach PiP (a contentSource swap can flicker).
+/// Observe `pictureInPictureDanmaku` directly so unrelated settings writes never wake PiP.
 @MainActor
 final class PiPDanmakuPreference {
     private var generation = 0
     private var lastValue: Bool?
     func watch(_ settings: AppSettings, onChange: @escaping @MainActor () -> Void) {
         generation += 1
-        lastValue = settings.data.pictureInPictureDanmaku
+        lastValue = settings.pictureInPictureDanmaku
         observe(settings, generation: generation, onChange: onChange)
     }
     func stop() { generation += 1 }
     private func observe(_ settings: AppSettings, generation token: Int, onChange: @escaping @MainActor () -> Void) {
         withObservationTracking {
-            _ = settings.data.pictureInPictureDanmaku
+            _ = settings.pictureInPictureDanmaku
         } onChange: { [weak self, weak settings] in
             Task { @MainActor in
                 guard let self, let settings, self.generation == token else { return }
-                let value = settings.data.pictureInPictureDanmaku
+                let value = settings.pictureInPictureDanmaku
                 let changed = value != self.lastValue
                 self.lastValue = value
                 self.observe(settings, generation: token, onChange: onChange)

@@ -297,5 +297,27 @@ struct BufferedPlaybackCheck {
         precondition(silent.lastReceivedAt == nil, "A socket without bytes reported receipt")
         silent.cancel()
         print("PASS: a connected socket that delivers no bytes is distinguishable from a receiving one")
+
+        // Timeline restart inside one connection must keep buffered duration monotonic instead of resetting to 0.
+        let restarted = LiveTagBuffer()
+        try await restarted.append(tag(50_000, header: true))
+        try await restarted.append(tag(50_000, key: true))
+        try await restarted.append(tag(52_000))
+        try await restarted.append(tag(0, key: true))
+        try await restarted.append(tag(2_000))
+        let restartedSnap = await restarted.snapshot()
+        precondition(restartedSnap.seconds >= 3.9 && restartedSnap.ready,
+                     "Timeline restart collapsed buffered duration: \(restartedSnap.seconds)")
+        let batch = await restarted.popBatch(maxCount: 3)
+        precondition(batch.tags.count == 3 && batch.snapshot.count == 2)
+        // Non-zero startIndex Data slices must parse safely without crashing.
+        let prefixed = Data([0xAA, 0xBB, 0x17, 0x01, 0x00, 0x00, 0x00, 0x01, 0x02])
+        let slice = prefixed[2..<prefixed.endIndex]
+        let parsedVideo = FLVVideoTag(payload: slice)
+        precondition(parsedVideo != nil && parsedVideo!.isKeyframe)
+        let prefixedAudio = Data([0xCC, 0xAF, 0x01, 0x21, 0x10])
+        let parsedAudio = FLVAudioTag(payload: prefixedAudio[1..<prefixedAudio.endIndex])
+        precondition(parsedAudio != nil)
+        print("PASS: timeline restart keeps buffered duration monotonic, popBatch works, and non-zero Data slices parse safely")
     }
 }

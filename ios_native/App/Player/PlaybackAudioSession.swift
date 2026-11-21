@@ -12,6 +12,15 @@ final class PlaybackAudioSession {
     private let activate: () throws -> Void
     private let deactivate: () throws -> Void
     private let setSampleRate: (Double) throws -> Void
+    #if os(iOS)
+    private struct Listener {
+        let onInterruptionEnded: () -> Void
+        let onRouteLost: () -> Void
+    }
+    private var listeners: [UUID: Listener] = [:]
+    private var observingSystemNotifications = false
+    private var systemObservers: [any NSObjectProtocol] = []
+    #endif
 
     init(activate: @escaping () throws -> Void = {
         #if os(iOS)
@@ -34,6 +43,9 @@ final class PlaybackAudioSession {
     }
 
     func acquire(_ owner: UUID) {
+        #if os(iOS)
+        installSystemObserversIfNeeded()
+        #endif
         guard !owners.contains(owner) else { return }
         if owners.isEmpty {
             do { try activate() } catch { return }
@@ -42,6 +54,9 @@ final class PlaybackAudioSession {
     }
 
     func release(_ owner: UUID) {
+        #if os(iOS)
+        listeners.removeValue(forKey: owner)
+        #endif
         guard owners.remove(owner) != nil, owners.isEmpty else { return }
         try? deactivate()
     }
@@ -51,6 +66,47 @@ final class PlaybackAudioSession {
         guard owners.count == 1, owners.contains(owner) else { return }
         try? setSampleRate(rate)
     }
+
+    #if os(iOS)
+    /// 自研音频渲染器（AVSampleBufferAudioRenderer）不会自动响应来电中断或耳机拔出；
+    /// 在此统一监听系统通知，恢复会话后回调渲染器重对齐，耳机拔出时通知播放器静音/暂停。
+    func register(owner: UUID, onInterruptionEnded: @escaping () -> Void, onRouteLost: @escaping () -> Void) {
+        installSystemObserversIfNeeded()
+        listeners[owner] = Listener(onInterruptionEnded: onInterruptionEnded, onRouteLost: onRouteLost)
+    }
+
+    private func installSystemObserversIfNeeded() {
+        guard !observingSystemNotifications else { return }
+        observingSystemNotifications = true
+        let center = NotificationCenter.default
+        let session = AVAudioSession.sharedInstance()
+        systemObservers = [
+            center.addObserver(forName: AVAudioSession.interruptionNotification, object: session, queue: .main) { [weak self] note in
+                let rawType = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+                let rawOptions = note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+                MainActor.assumeIsolated {
+                    guard let self, let rawType,
+                          let type = AVAudioSession.InterruptionType(rawValue: rawType) else { return }
+                    guard type == .ended, !self.owners.isEmpty else { return }
+                    let options = AVAudioSession.InterruptionOptions(rawValue: rawOptions)
+                    if options.contains(.shouldResume) || !self.owners.isEmpty {
+                        try? self.activate()
+                        for listener in Array(self.listeners.values) { listener.onInterruptionEnded() }
+                    }
+                }
+            },
+            center.addObserver(forName: AVAudioSession.routeChangeNotification, object: session, queue: .main) { [weak self] note in
+                let rawReason = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+                MainActor.assumeIsolated {
+                    guard let self, let rawReason,
+                          AVAudioSession.RouteChangeReason(rawValue: rawReason) == .oldDeviceUnavailable,
+                          !self.owners.isEmpty else { return }
+                    for listener in Array(self.listeners.values) { listener.onRouteLost() }
+                }
+            },
+        ]
+    }
+    #endif
 }
 
 /// Suspend ordinary playback while the multi-watch workspace owns the screen.

@@ -19,7 +19,22 @@ enum DanmakuFont: String, CaseIterable, Identifiable, Codable {
         }
     }
 
+    private struct FontKey: Hashable {
+        let font: DanmakuFont
+        let deciPoints: Int
+    }
+
+    private static let fontLock = NSLock()
+    private static var fontCache: [FontKey: CTFont] = [:]
+
     func makeFont(size: CGFloat) -> CTFont {
+        let key = FontKey(font: self, deciPoints: Int((size * 10).rounded()))
+        Self.fontLock.lock()
+        if let cached = Self.fontCache[key] {
+            Self.fontLock.unlock()
+            return cached
+        }
+        Self.fontLock.unlock()
         #if os(macOS)
         let base = NSFont.systemFont(ofSize: size, weight: .medium)
         let design: NSFontDescriptor.SystemDesign = self == .rounded ? .rounded : self == .serif ? .serif : .default
@@ -31,7 +46,12 @@ enum DanmakuFont: String, CaseIterable, Identifiable, Codable {
         let descriptor = base.fontDescriptor.withDesign(design) ?? base.fontDescriptor
         let font = UIFont(descriptor: descriptor, size: size)
         #endif
-        return font as CTFont
+        let ctFont = font as CTFont
+        Self.fontLock.lock()
+        if Self.fontCache.count > 64 { Self.fontCache.removeAll(keepingCapacity: true) }
+        Self.fontCache[key] = ctFont
+        Self.fontLock.unlock()
+        return ctFont
     }
 }
 
@@ -45,9 +65,40 @@ enum DanmakuTextRasterizer {
         let scale: CGFloat
     }
 
+    private final class CachedRaster: NSObject {
+        let raster: Raster
+        init(_ raster: Raster) { self.raster = raster }
+    }
+
+    private static let sRGB = CGColorSpace(name: CGColorSpace.sRGB)
+    private static let outlineColor = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.85)
+    private static let cache: NSCache<NSString, CachedRaster> = {
+        let cache = NSCache<NSString, CachedRaster>()
+        cache.totalCostLimit = 8 * 1024 * 1024
+        cache.countLimit = 512
+        return cache
+    }()
+
+    private static func cacheKey(text: String, font: CTFont, color: CGColor,
+                                 strokeWidth: CGFloat, scale: CGFloat) -> NSString {
+        let fontName = CTFontCopyPostScriptName(font) as String
+        let fontSize = Int((CTFontGetSize(font) * 100).rounded())
+        let stroke = Int((strokeWidth * 100).rounded())
+        let scaleInt = Int((scale * 100).rounded())
+        let spaceName = (color.colorSpace?.name as String?) ?? ""
+        let components = (color.components ?? []).map { String(Int(($0 * 1000).rounded())) }.joined(separator: ",")
+        return "\(fontName)|\(fontSize)|\(stroke)|\(scaleInt)|\(spaceName)|\(components)|\(text)" as NSString
+    }
+
     static func render(text: String, font: CTFont, color: CGColor,
                        strokeWidth: CGFloat, scale: CGFloat) -> Raster? {
         guard !text.isEmpty, scale.isFinite, scale > 0, strokeWidth.isFinite else { return nil }
+        let key: NSString? = text.count <= 24
+            ? cacheKey(text: text, font: font, color: color, strokeWidth: strokeWidth, scale: scale)
+            : nil
+        if let key, let hit = cache.object(forKey: key) {
+            return hit.raster
+        }
         let fillAttributes: [NSAttributedString.Key: Any] = [
             NSAttributedString.Key(kCTFontAttributeName as String): font,
             NSAttributedString.Key(kCTForegroundColorAttributeName as String): color,
@@ -70,7 +121,7 @@ enum DanmakuTextRasterizer {
         // Bound allocation for pathological external input. Normal chat is far below this limit.
         guard pixelWidth.isFinite, pixelHeight.isFinite, pixelWidth > 0, pixelHeight > 0,
               pixelWidth <= 32768, pixelHeight <= 4096, pixelWidth * pixelHeight <= 8_388_608,
-              let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let space = sRGB,
               let context = CGContext(data: nil, width: Int(pixelWidth), height: Int(pixelHeight),
                                       bitsPerComponent: 8, bytesPerRow: Int(pixelWidth) * 4,
                                       space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
@@ -85,8 +136,7 @@ enum DanmakuTextRasterizer {
             context.saveGState()
             var outlineAttributes = fillAttributes
             outlineAttributes[NSAttributedString.Key(kCTStrokeWidthAttributeName as String)] = strokeWidth
-            outlineAttributes[NSAttributedString.Key(kCTStrokeColorAttributeName as String)] =
-                CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.85)
+            outlineAttributes[NSAttributedString.Key(kCTStrokeColorAttributeName as String)] = outlineColor
             let outline = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: outlineAttributes))
             context.textPosition = origin
             CTLineDraw(outline, context)
@@ -96,6 +146,10 @@ enum DanmakuTextRasterizer {
         context.textPosition = origin
         CTLineDraw(fill, context)
         guard let image = context.makeImage() else { return nil }
-        return Raster(image: image, size: CGSize(width: pixelWidth / scale, height: pixelHeight / scale), scale: scale)
+        let raster = Raster(image: image, size: CGSize(width: pixelWidth / scale, height: pixelHeight / scale), scale: scale)
+        if let key {
+            cache.setObject(CachedRaster(raster), forKey: key, cost: Int(pixelWidth * pixelHeight * 4))
+        }
+        return raster
     }
 }

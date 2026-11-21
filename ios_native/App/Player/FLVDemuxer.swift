@@ -134,20 +134,27 @@ struct FLVVideoTag {
     /// 仅支持 AVC(H.264)；其他编码返回 nil 由上层给出明确提示
     init?(payload: Data) {
         guard payload.count >= 5 else { return nil }
-        let frameType = (payload[0] & 0xF0) >> 4
-        let codecID = payload[0] & 0x0F
+        let base = payload.startIndex
+        let byte0 = payload[base]
+        let frameType = (byte0 & 0xF0) >> 4
+        let codecID = byte0 & 0x0F
         guard codecID == 7 else { return nil }  // 7 = AVC
 
         isKeyframe = frameType == 1
-        let packetType = payload[1]
+        let packetType = payload[payload.index(base, offsetBy: 1)]
 
         // 24 位有符号合成时间偏移
-        let raw = (UInt32(payload[2]) << 16) | (UInt32(payload[3]) << 8) | UInt32(payload[4])
+        let b2 = payload[payload.index(base, offsetBy: 2)]
+        let b3 = payload[payload.index(base, offsetBy: 3)]
+        let b4 = payload[payload.index(base, offsetBy: 4)]
+        let raw = (UInt32(b2) << 16) | (UInt32(b3) << 8) | UInt32(b4)
         compositionTimeOffset = raw & 0x800000 != 0
             ? Int32(bitPattern: raw | 0xFF00_0000)
             : Int32(raw)
 
-        let body = payload.subdata(in: 5..<payload.count)
+        // 零拷贝切片：避免每帧视频多一次整帧内存分配与复制
+        let bodyStart = payload.index(base, offsetBy: 5)
+        let body = payload[bodyStart..<payload.endIndex]
         switch packetType {
         case 0: packet = .sequenceHeader(body)
         case 1: packet = .nalus(body)
@@ -166,33 +173,39 @@ struct AVCConfig {
     init?(record: Data) {
         // configurationVersion(1) profile(1) compat(1) level(1) lengthSizeMinusOne(1) numSPS(1)
         guard record.count > 6 else { return nil }
-        nalUnitLength = Int(record[4] & 0x03) + 1
+        let base = record.startIndex
+        let end = record.endIndex
+        nalUnitLength = Int(record[record.index(base, offsetBy: 4)] & 0x03) + 1
 
-        var index = 5
+        var index = record.index(base, offsetBy: 5)
         var sps: [Data] = []
         var pps: [Data] = []
 
         let spsCount = Int(record[index] & 0x1F)
-        index += 1
+        index = record.index(after: index)
         for _ in 0..<spsCount {
-            guard index + 2 <= record.count else { return nil }
-            let length = (Int(record[index]) << 8) | Int(record[index + 1])
-            index += 2
-            guard index + length <= record.count else { return nil }
-            sps.append(record.subdata(in: index..<(index + length)))
-            index += length
+            guard record.distance(from: index, to: end) >= 2 else { return nil }
+            let next = record.index(after: index)
+            let length = (Int(record[index]) << 8) | Int(record[next])
+            index = record.index(after: next)
+            guard record.distance(from: index, to: end) >= length else { return nil }
+            let sliceEnd = record.index(index, offsetBy: length)
+            sps.append(record[index..<sliceEnd])
+            index = sliceEnd
         }
 
-        guard index < record.count else { return nil }
+        guard index < end else { return nil }
         let ppsCount = Int(record[index])
-        index += 1
+        index = record.index(after: index)
         for _ in 0..<ppsCount {
-            guard index + 2 <= record.count else { return nil }
-            let length = (Int(record[index]) << 8) | Int(record[index + 1])
-            index += 2
-            guard index + length <= record.count else { return nil }
-            pps.append(record.subdata(in: index..<(index + length)))
-            index += length
+            guard record.distance(from: index, to: end) >= 2 else { return nil }
+            let next = record.index(after: index)
+            let length = (Int(record[index]) << 8) | Int(record[next])
+            index = record.index(after: next)
+            guard record.distance(from: index, to: end) >= length else { return nil }
+            let sliceEnd = record.index(index, offsetBy: length)
+            pps.append(record[index..<sliceEnd])
+            index = sliceEnd
         }
 
         guard !sps.isEmpty, !pps.isEmpty else { return nil }
@@ -246,11 +259,13 @@ struct FLVAudioTag {
     /// 仅支持 AAC
     init?(payload: Data) {
         guard payload.count >= 2 else { return nil }
-        let soundFormat = (payload[0] & 0xF0) >> 4
+        let base = payload.startIndex
+        let soundFormat = (payload[base] & 0xF0) >> 4
         guard soundFormat == 10 else { return nil }  // 10 = AAC
 
-        let body = payload.subdata(in: 2..<payload.count)
-        switch payload[1] {
+        let bodyStart = payload.index(base, offsetBy: 2)
+        let body = payload[bodyStart..<payload.endIndex]
+        switch payload[payload.index(after: base)] {
         case 0: packet = .sequenceHeader(body)
         case 1: packet = .raw(body)
         default: return nil
@@ -271,8 +286,9 @@ struct AACConfig {
 
     init?(config: Data) {
         guard config.count >= 2 else { return nil }
-        let byte0 = config[0]
-        let byte1 = config[1]
+        let base = config.startIndex
+        let byte0 = config[base]
+        let byte1 = config[config.index(after: base)]
 
         // 5 bits objectType | 4 bits frequencyIndex | 4 bits channelConfig
         let frequencyIndex = Int(((byte0 & 0x07) << 1) | ((byte1 & 0x80) >> 7))

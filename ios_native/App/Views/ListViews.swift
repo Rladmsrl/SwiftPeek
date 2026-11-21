@@ -122,6 +122,12 @@ struct CategoryRoomsView: View {
             RoomGrid(rooms: store.rooms) { await store.loadMoreIfNeeded(currentItem: $0) }
                 .padding(.top, 4)
 
+            if store.isLoadingMore {
+                ProgressView()
+                    .controlSize(.small)
+                    .padding(.vertical, 16)
+            }
+
             PhaseStateView(phase: store.phase, isEmpty: store.rooms.isEmpty) {
                 Task { await store.refresh() }
             }
@@ -160,7 +166,7 @@ struct SearchView: View {
 
                 switch store.scope {
                 case .rooms:
-                    RoomGrid(rooms: store.rooms)
+                    RoomGrid(rooms: store.rooms) { await store.loadMoreIfNeeded(currentRoom: $0) }
                 case .anchors:
                     LazyVStack(spacing: 0) {
                         ForEach(store.anchors) { anchor in
@@ -174,9 +180,16 @@ struct SearchView: View {
                             .overlay(alignment: .bottom) {
                                 Rectangle().fill(Theme.hairline).frame(height: 0.5).padding(.leading, 56)
                             }
+                            .task { await store.loadMoreIfNeeded(currentAnchor: anchor) }
                         }
                     }
                     .padding(.horizontal, 16)
+                }
+
+                if store.isLoadingMore {
+                    ProgressView()
+                        .controlSize(.small)
+                        .padding(.vertical, 16)
                 }
 
                 if store.phase == .idle {
@@ -199,9 +212,11 @@ struct SearchView: View {
             .navigationTitle("搜索")
             .searchable(text: $store.keyword, prompt: "主播昵称、直播间或录像链接")
             .onSubmit(of: .search) {
-                // 粘贴的录像链接直接打开，不当作关键词搜索
+                // 粘贴的录像链接或直播间链接直接打开，不当作关键词搜索
                 if let replay = DouyuReplayService.parseLink(store.keyword) {
                     path.append(ReplayRoute(hashID: replay.hashID, start: replay.start))
+                } else if let roomID = RoomLink.roomID(from: store.keyword) {
+                    path.append(RoomRoute(roomID: roomID, title: "房间 \(roomID)"))
                 } else {
                     store.search()
                 }

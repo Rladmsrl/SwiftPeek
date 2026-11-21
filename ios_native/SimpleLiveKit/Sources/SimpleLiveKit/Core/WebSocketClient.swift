@@ -44,8 +44,8 @@ public actor WebSocketClient {
     private var receiveLoop: Task<Void, Never>?
     private var heartbeatLoop: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
-    private var pathMonitor: NWPathMonitor?
-    private var pathSatisfied = true
+    private var pathToken: UUID?
+    private var pathState: (satisfied: Bool, interfaces: [String])?
 
     private var reconnectAttempts = 0
     private var usedBackup = false
@@ -57,8 +57,6 @@ public actor WebSocketClient {
 
     /// 心跳回调：由上层站点决定心跳包内容
     private let heartbeatProvider: @Sendable () -> Data?
-
-    private static let pathQueue = DispatchQueue(label: "SimpleLiveKit.WebSocketClient.path")
 
     public init(
         url: String,
@@ -227,22 +225,20 @@ public actor WebSocketClient {
     // MARK: 网络路径
 
     private func startPathMonitorIfNeeded() {
-        guard pathMonitor == nil else { return }
-        let monitor = NWPathMonitor()
-        monitor.pathUpdateHandler = { [weak self] path in
-            let satisfied = path.status == .satisfied
-            Task { await self?.pathChanged(satisfied: satisfied) }
+        guard pathToken == nil else { return }
+        pathToken = WebSocketPathHub.shared.observe { [weak self] satisfied, interfaces in
+            Task { await self?.pathChanged(satisfied: satisfied, interfaces: interfaces) }
         }
-        monitor.start(queue: Self.pathQueue)
-        pathMonitor = monitor
     }
 
-    /// 网络从不可用恢复：不等退避，立即用满额预算重连。
-    /// 断网前建立的连接多半已经半开，同样重建。
-    private func pathChanged(satisfied: Bool) {
-        let recovered = satisfied && !pathSatisfied
-        pathSatisfied = satisfied
-        guard recovered, status == .connected || status == .failed else { return }
+    /// 网络从不可用恢复，或活跃网卡切换（Wi-Fi ↔ 蜂窝）：不等退避，立即重建。
+    /// 旧连接绑在失效接口上不会立刻报错，必须主动切掉，否则要等到 2.5 个心跳周期才发现。
+    private func pathChanged(satisfied: Bool, interfaces: [String]) {
+        let previous = pathState
+        pathState = (satisfied, interfaces)
+        guard let previous else { return }
+        let shouldReconnect = satisfied && (!previous.satisfied || interfaces != previous.interfaces)
+        guard shouldReconnect, status == .connected || status == .failed else { return }
         reconnectAttempts = 0
         reconnectTask?.cancel()
         reconnectTask = nil
@@ -265,11 +261,70 @@ public actor WebSocketClient {
         status = .closed
         reconnectTask?.cancel()
         reconnectTask = nil
-        pathMonitor?.cancel()
-        pathMonitor = nil
+        if let token = pathToken {
+            WebSocketPathHub.shared.remove(token)
+            pathToken = nil
+        }
         teardownConnection()
         // 每个客户端一个会话，不失效就一直留着
         session.invalidateAndCancel()
         continuation.finish()
+    }
+
+    deinit {
+        if let token = pathToken {
+            WebSocketPathHub.shared.remove(token)
+        }
+        reconnectTask?.cancel()
+        receiveLoop?.cancel()
+        heartbeatLoop?.cancel()
+        session.invalidateAndCancel()
+    }
+}
+
+/// 共享单实例 NWPathMonitor，避免多画面 / 多窗口为每条弹幕连接各自创建系统网络监控。
+private final class WebSocketPathHub: @unchecked Sendable {
+    static let shared = WebSocketPathHub()
+    private let lock = NSLock()
+    private let queue = DispatchQueue(label: "SimpleLiveKit.WebSocketClient.path", qos: .utility)
+    private let monitor = NWPathMonitor()
+    private var started = false
+    private var latest: (satisfied: Bool, interfaces: [String])?
+    private var observers: [UUID: @Sendable (Bool, [String]) -> Void] = [:]
+
+    private init() {
+        monitor.pathUpdateHandler = { [weak self] path in
+            let satisfied = path.status == .satisfied
+            let interfaces = path.availableInterfaces.filter { path.usesInterfaceType($0.type) }.map(\.name)
+            self?.publish(satisfied: satisfied, interfaces: interfaces)
+        }
+    }
+
+    func observe(_ handler: @escaping @Sendable (Bool, [String]) -> Void) -> UUID {
+        let token = UUID()
+        lock.lock()
+        observers[token] = handler
+        let snapshot = latest
+        if !started {
+            started = true
+            monitor.start(queue: queue)
+        }
+        lock.unlock()
+        if let snapshot { handler(snapshot.satisfied, snapshot.interfaces) }
+        return token
+    }
+
+    func remove(_ token: UUID) {
+        lock.lock()
+        observers.removeValue(forKey: token)
+        lock.unlock()
+    }
+
+    private func publish(satisfied: Bool, interfaces: [String]) {
+        lock.lock()
+        latest = (satisfied, interfaces)
+        let handlers = Array(observers.values)
+        lock.unlock()
+        for handler in handlers { handler(satisfied, interfaces) }
     }
 }

@@ -143,6 +143,40 @@ struct ReviewFixesCheck {
         view.layout()
         precondition((view.layer?.sublayers ?? []).isEmpty)
         print("PASS: speed/size changes remove old animations before freeing tracks")
+
+        // Buffered replacement stream confirms offline status instead of retrying indefinitely.
+        await site.configure(fail: true, statuses: [false, false])
+        do {
+            _ = try await store.prepareReplacementStream(rotateLine: true)
+            fatalError("Offline replacement preparation unexpectedly succeeded")
+        } catch let offline as LiveStreamOfflineError {
+            precondition(offline.reason == "主播已下播" && store.offlineNotice == "主播已下播")
+        }
+        print("PASS: buffered replacement stream confirms offline and throws LiveStreamOfflineError")
+
+        // Transient pagination failure must not permanently disable loadMore.
+        var failPageTwo = true
+        let recommend = RecommendStore { page in
+            if page == 1 {
+                return LiveCategoryResult(hasMore: true, items: (1...10).map {
+                    LiveRoomItem(roomID: "\($0)", title: "r\($0)", cover: "", userName: "u\($0)")
+                })
+            }
+            if failPageTwo {
+                failPageTwo = false
+                throw LiveCoreError("transient")
+            }
+            return LiveCategoryResult(hasMore: false, items: [
+                LiveRoomItem(roomID: "11", title: "r11", cover: "", userName: "u11")
+            ])
+        }
+        await recommend.refresh()
+        await recommend.loadMoreIfNeeded(currentItem: recommend.rooms.last!)
+        precondition(recommend.rooms.count == 10)
+        await recommend.loadMoreIfNeeded(currentItem: recommend.rooms.last!)
+        precondition(recommend.rooms.count == 11, "Transient pagination error permanently disabled loadMore")
+        print("PASS: transient pagination failure keeps infinite scroll retryable")
+
         await store.stop()
         await replacement.stop()
     }

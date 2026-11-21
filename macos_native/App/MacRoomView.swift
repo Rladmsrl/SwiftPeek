@@ -41,12 +41,12 @@ final class MacRoomSession {
         }
         self.settings = settings
         self.library = library
-        player.volume = settings.data.playerVolume
+        player.volume = settings.playerVolume
         pip.attach(player: player, automatic: false, settings: settings)
         pip.danmakuSnapshot = { [weak self, weak settings] in
             guard let self, let settings else { return PiPDanmakuSnapshot() }
             return PiPDanmakuSnapshot(messages: self.store.messages, settings: settings.danmakuSettings,
-                                      isVisible: settings.data.pictureInPictureDanmaku && self.store.isDanmakuVisible,
+                                      isVisible: settings.pictureInPictureDanmaku && self.store.isDanmakuVisible,
                                       sourceID: self.roomID)
         }
         pip.onRequestPlay = { [weak self] in self?.play() }
@@ -63,7 +63,7 @@ final class MacRoomSession {
         }
         player.onSustainedUnderrun = { [weak self] in self?.lowerQualityForWeakNetwork() }
         LiveDiagnostics.record("room.open", roomID: roomID, fields: ["player": player.diagnosticID])
-        loadRoom(autoplay: settings.data.autoPlay, selection: selection)
+        loadRoom(autoplay: settings.autoPlay, selection: selection)
         telemetry = Task { [weak self] in
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(15)) } catch { return }
@@ -164,7 +164,7 @@ final class MacRoomSession {
 
     /// Weak-network downgrade applies to this window only; the default preference is untouched.
     private func lowerQualityForWeakNetwork() {
-        guard opened, !isWorking, player.isActive, settings?.data.autoLowerQuality == true,
+        guard opened, !isWorking, player.isActive, settings?.autoLowerQuality == true,
               let index = store.lowerQualityIndex else { return }
         let name = store.qualities[index].quality
         LiveDiagnostics.record("room.autoLowerQuality", roomID: roomID, fields: ["quality": name])
@@ -225,7 +225,7 @@ final class MacRoomSession {
         telemetry?.cancel()
         telemetry = nil
         isWorking = false
-        settings?.data.playerVolume = player.volume
+        settings?.playerVolume = player.volume
         pip.detach()
         player.onNeedsFreshStream = nil
         player.onPrepareStream = nil
@@ -325,7 +325,8 @@ struct MacRoomView: View {
             hideTask?.cancel()
             session.close()
         }
-        .onChange(of: settings.data.danmakuVisibleByDefault) { _, value in session.store.isDanmakuVisible = value }
+        .onChange(of: settings.danmakuVisibleByDefault) { _, value in session.store.isDanmakuVisible = value }
+        .onChange(of: session.player.videoSize) { _, size in session.pip.updateVideoSize(size) }
     }
 
     private var followed: Bool { library.isFollowed(session.store.detail?.roomID ?? roomID) }
@@ -351,8 +352,8 @@ struct MacRoomView: View {
                 VStack(spacing: 10) {
                     HStack {
                         Spacer()
-                        if settings.data.showResolutionBadge, let size = session.player.videoSize {
-                            Text("\(Int(size.width)) × \(Int(size.height))")
+                        if settings.showResolutionBadge, let size = session.player.videoSize {
+                            Text("\(Int(size.width).description) × \(Int(size.height).description)")
                                 .font(.system(size: 10, weight: .medium, design: .monospaced))
                                 .foregroundStyle(.white.opacity(0.65))
                         }

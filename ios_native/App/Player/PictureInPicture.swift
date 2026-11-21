@@ -41,6 +41,7 @@ final class PiPController: NSObject {
             composite.snapshot = { [weak self] in self?.danmakuSnapshot?() ?? PiPDanmakuSnapshot() }
             composite.frame = { [weak player] in player?.pictureInPictureFrame() }
             composite.parent = { [weak player] in player?.displayLayer.superlayer }
+            composite.playbackTime = { [weak player] in player?.synchronizerTimeAndRate() ?? (.zero, 0) }
             composite.onReady = { [weak self] in
                 guard let self, let controller = self.controller, self.isActive else { return }
                 controller.contentSource = AVPictureInPictureController.ContentSource(
@@ -117,6 +118,13 @@ final class PiPController: NSObject {
         isPlaybackRequested = nil
         onStateChange = nil
         danmakuSnapshot = nil
+    }
+
+    isolated deinit {
+        composite.stop()
+        preference.stop()
+        controller?.delegate = nil
+        controller?.stopPictureInPicture()
     }
 }
 

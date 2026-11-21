@@ -141,14 +141,28 @@ final class PiPLiveFrameSource: @unchecked Sendable {
         }
         if !decodeOnly { lastInput = pts }
         if session == nil {
-            let attributes: [String: Any] = [
+            let baseAttributes: [String: Any] = [
                 kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
                 kCVPixelBufferIOSurfacePropertiesKey as String: [:],
                 kCVPixelBufferMetalCompatibilityKey as String: true,
             ]
-            guard VTDecompressionSessionCreate(allocator: nil, formatDescription: newFormat,
-                                               decoderSpecification: nil, imageBufferAttributes: attributes as CFDictionary,
-                                               outputCallback: nil, decompressionSessionOut: &session) == noErr else { return }
+            var scaledAttributes = baseAttributes
+            let dimensions = CMVideoFormatDescriptionGetDimensions(newFormat)
+            if dimensions.width > 0, dimensions.height > 0 {
+                let width = CGFloat(dimensions.width), height = CGFloat(dimensions.height)
+                let scale = min(1, 480 / max(width, height))
+                scaledAttributes[kCVPixelBufferWidthKey as String] = Int(max(2, floor(width * scale / 2) * 2))
+                scaledAttributes[kCVPixelBufferHeightKey as String] = Int(max(2, floor(height * scale / 2) * 2))
+            }
+            var status = VTDecompressionSessionCreate(allocator: nil, formatDescription: newFormat,
+                                                      decoderSpecification: nil, imageBufferAttributes: scaledAttributes as CFDictionary,
+                                                      outputCallback: nil, decompressionSessionOut: &session)
+            if status != noErr {
+                status = VTDecompressionSessionCreate(allocator: nil, formatDescription: newFormat,
+                                                      decoderSpecification: nil, imageBufferAttributes: baseAttributes as CFDictionary,
+                                                      outputCallback: nil, decompressionSessionOut: &session)
+            }
+            guard status == noErr else { return }
             format = newFormat
         }
         guard let session else { return }
@@ -185,8 +199,11 @@ final class PiPLiveFrameSource: @unchecked Sendable {
             self.frameLock.lock()
             defer { self.frameLock.unlock() }
             guard token == self.epoch else { return }
-            self.frames.append((timestamp, small))
-            self.frames.sort { $0.0 < $1.0 }
+            var insertIndex = self.frames.count
+            while insertIndex > 0, self.frames[insertIndex - 1].0 > timestamp {
+                insertIndex -= 1
+            }
+            self.frames.insert((timestamp, small), at: insertIndex)
             // Keep the complete 60 fps lookahead. Resolution is bounded by the
             // actual surface allocation size, instead of evicting unplayed frames.
             let bytes = max(1, CVPixelBufferGetDataSize(small))

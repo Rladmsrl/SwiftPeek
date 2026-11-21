@@ -10,22 +10,31 @@ enum Sites {
 
 // MARK: - 房间状态确认
 
+/// 按房间独立可观察，避免一个房间确认完成引起整屏所有卡片重绘。
+@MainActor
+@Observable
+private final class RoomStatusBox {
+    var status: LiveRoomStatus
+    @ObservationIgnored var confirmedAt: Date?
+    @ObservationIgnored var lastAccessedAt: Date
+
+    init(status: LiveRoomStatus = .loopCandidate, confirmedAt: Date? = nil, accessedAt: Date) {
+        self.status = status
+        self.confirmedAt = confirmedAt
+        self.lastAccessedAt = accessedAt
+    }
+}
+
 /// 列表里的轮播类型房间（`.loopCandidate`）主播可能正在真直播，只有房间自身的
 /// 状态接口说得准。卡片出现时逐个确认：限制并发、短时缓存，确认结果对所有列表共享。
 @MainActor
-@Observable
 final class RoomStatusConfirmations {
     static let shared = RoomStatusConfirmations()
     /// 同一房间在这段时间内不重复请求
     static let lifetime: TimeInterval = 120
     static let concurrency = 4
 
-    private struct Confirmation {
-        let status: LiveRoomStatus
-        let confirmedAt: Date
-    }
-
-    private var confirmations: [String: Confirmation] = [:]
+    private var boxes: [String: RoomStatusBox] = [:]
     /// 每个房间最多一个进行中的确认，所有卡片共同等待它。
     /// 原先用集合占位：滑走的卡片取消后仍占着房间号，滑回来的新卡片直接返回，
     /// 而旧请求拿到名额时已取消、什么也不查，这张卡就一直停在待确认、看起来像在直播。
@@ -34,22 +43,33 @@ final class RoomStatusConfirmations {
         let task: Task<Void, Never>
         var waiters: Int
     }
-    @ObservationIgnored private var inFlight: [String: Pending] = [:]
-    @ObservationIgnored private var nextToken = 0
-    @ObservationIgnored private var running = 0
-    @ObservationIgnored private var waiters: [(ticket: Int, continuation: CheckedContinuation<Bool, Never>)] = []
-    @ObservationIgnored private let lookup: @MainActor (String) async throws -> LiveRoomStatus
-    @ObservationIgnored private let now: () -> Date
+    private var inFlight: [String: Pending] = [:]
+    private var nextToken = 0
+    private var running = 0
+    private var waiters: [(ticket: Int, continuation: CheckedContinuation<Bool, Never>)] = []
+    private let lookup: @MainActor (String) async throws -> LiveRoomStatus
+    private let now: () -> Date
 
     init(lookup: (@MainActor (String) async throws -> LiveRoomStatus)? = nil, now: @escaping () -> Date = Date.init) {
         self.lookup = lookup ?? { try await Sites.douyu.roomBrief(roomID: $0).status }
         self.now = now
     }
 
+    private func box(for id: String) -> RoomStatusBox {
+        let stamp = now()
+        if let existing = boxes[id] {
+            existing.lastAccessedAt = stamp
+            return existing
+        }
+        let created = RoomStatusBox(accessedAt: stamp)
+        boxes[id] = created
+        return created
+    }
+
     /// 待确认的房间在确认前不显示状态；确认过期后仍沿用上次结果，直到重新确认完成。
     func status(of room: LiveRoomItem) -> LiveRoomStatus {
         guard room.status == .loopCandidate else { return room.status }
-        return confirmations[room.roomID]?.status ?? .loopCandidate
+        return box(for: room.roomID).status
     }
 
     /// 由卡片的 `.task` 调用。卡片滑出屏幕时任务被取消；同一房间的所有卡片都走开后，
@@ -57,7 +77,7 @@ final class RoomStatusConfirmations {
     func confirmIfNeeded(_ room: LiveRoomItem) async {
         guard room.status == .loopCandidate, !Task.isCancelled else { return }
         let id = room.roomID
-        if let existing = confirmations[id], now().timeIntervalSince(existing.confirmedAt) < Self.lifetime { return }
+        if let confirmedAt = boxes[id]?.confirmedAt, now().timeIntervalSince(confirmedAt) < Self.lifetime { return }
         var pending: Pending
         if let existing = inFlight[id] {
             pending = existing
@@ -94,8 +114,14 @@ final class RoomStatusConfirmations {
         defer { release() }
         guard !Task.isCancelled, let status = try? await lookup(id), !Task.isCancelled else { return }
         let stamp = now()
-        confirmations = confirmations.filter { stamp.timeIntervalSince($0.value.confirmedAt) < Self.lifetime * 5 }
-        confirmations[id] = Confirmation(status: status, confirmedAt: stamp)
+        let entry = box(for: id)
+        if entry.status != status { entry.status = status }
+        entry.confirmedAt = stamp
+        if boxes.count > 256 {
+            boxes = boxes.filter { key, box in
+                key == id || inFlight[key] != nil || stamp.timeIntervalSince(box.lastAccessedAt) < Self.lifetime * 5
+            }
+        }
     }
 
     /// 返回 false 表示排队期间被取消，没有拿到名额。
@@ -140,6 +166,7 @@ final class RecommendStore {
     private var hasMore = true
     /// 下拉刷新会让进行中的 loadMore 作废，避免旧页数据接到新列表上。
     private var loadGeneration = 0
+    @ObservationIgnored private var loadMoreTask: Task<Void, Never>?
     private let fetch: @MainActor (Int) async throws -> LiveCategoryResult
 
     init(fetch: (@MainActor (Int) async throws -> LiveCategoryResult)? = nil) {
@@ -160,6 +187,9 @@ final class RecommendStore {
     /// 否则下一次加载会重新请求第 2 页，结果全被去重滤掉，无限滚动就此卡住。
     func refresh(quietly: Bool = false) async {
         loadGeneration += 1
+        loadMoreTask?.cancel()
+        loadMoreTask = nil
+        isLoadingMore = false
         let generation = loadGeneration
         phase = .loading
         do {
@@ -170,8 +200,15 @@ final class RecommendStore {
             hasMore = result.hasMore
             loadedAt = Date()
             phase = .loaded
+        } catch is CancellationError {
+            guard generation == loadGeneration else { return }
+            phase = rooms.isEmpty ? .idle : .loaded
         } catch {
             guard generation == loadGeneration else { return }
+            if Task.isCancelled {
+                phase = rooms.isEmpty ? .idle : .loaded
+                return
+            }
             phase = quietly && !rooms.isEmpty ? .loaded : .failed(error.localizedDescription)
         }
     }
@@ -184,19 +221,28 @@ final class RecommendStore {
         isLoadingMore = true
         let generation = loadGeneration
         let nextPage = page + 1
-        defer { isLoadingMore = false }
-        do {
-            let result = try await fetch(nextPage)
-            guard generation == loadGeneration else { return }
-            page = nextPage
-            // 斗鱼分页偶发重复，按 roomID 去重
-            let existing = Set(rooms.map(\.roomID))
-            rooms.append(contentsOf: result.items.filter { !existing.contains($0.roomID) })
-            hasMore = result.hasMore
-        } catch {
-            guard generation == loadGeneration else { return }
-            hasMore = false
+        let task = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if generation == self.loadGeneration {
+                    self.isLoadingMore = false
+                    self.loadMoreTask = nil
+                }
+            }
+            do {
+                let result = try await self.fetch(nextPage)
+                guard generation == self.loadGeneration, !Task.isCancelled else { return }
+                self.page = nextPage
+                // 斗鱼分页偶发重复，按 roomID 去重
+                let existing = Set(self.rooms.map(\.roomID))
+                self.rooms.append(contentsOf: result.items.filter { !existing.contains($0.roomID) })
+                self.hasMore = result.hasMore
+            } catch {
+                // 瞬时错误或取消不锁死 hasMore，继续滚动时可自动重试
+            }
         }
+        loadMoreTask = task
+        await task.value
     }
 }
 
@@ -208,14 +254,21 @@ final class CategoryStore {
     var categories: [LiveCategory] = []
     var phase: LoadPhase = .idle
 
-    func load() async {
-        guard categories.isEmpty else { return }
+    func load(force: Bool = false) async {
+        guard force || categories.isEmpty else { return }
+        guard phase != .loading else { return }
         phase = .loading
         do {
             categories = try await Sites.douyu.categories()
             phase = .loaded
+        } catch is CancellationError {
+            phase = categories.isEmpty ? .idle : .loaded
         } catch {
-            phase = .failed(error.localizedDescription)
+            if Task.isCancelled {
+                phase = categories.isEmpty ? .idle : .loaded
+                return
+            }
+            phase = categories.isEmpty ? .failed(error.localizedDescription) : .loaded
         }
     }
 }
@@ -229,8 +282,9 @@ final class CategoryRoomsStore {
 
     private var page = 1
     private var hasMore = true
-    private var isLoadingMore = false
+    private(set) var isLoadingMore = false
     private var loadGeneration = 0
+    @ObservationIgnored private var loadMoreTask: Task<Void, Never>?
     private let fetch: @MainActor (LiveSubCategory, Int) async throws -> LiveCategoryResult
 
     init(category: LiveSubCategory, fetch: (@MainActor (LiveSubCategory, Int) async throws -> LiveCategoryResult)? = nil) {
@@ -251,6 +305,9 @@ final class CategoryRoomsStore {
     /// 与推荐页相同：分页位置只在成功时改写。
     func refresh(quietly: Bool = false) async {
         loadGeneration += 1
+        loadMoreTask?.cancel()
+        loadMoreTask = nil
+        isLoadingMore = false
         let generation = loadGeneration
         phase = .loading
         do {
@@ -261,8 +318,15 @@ final class CategoryRoomsStore {
             hasMore = result.hasMore
             loadedAt = Date()
             phase = .loaded
+        } catch is CancellationError {
+            guard generation == loadGeneration else { return }
+            phase = rooms.isEmpty ? .idle : .loaded
         } catch {
             guard generation == loadGeneration else { return }
+            if Task.isCancelled {
+                phase = rooms.isEmpty ? .idle : .loaded
+                return
+            }
             phase = quietly && !rooms.isEmpty ? .loaded : .failed(error.localizedDescription)
         }
     }
@@ -273,18 +337,27 @@ final class CategoryRoomsStore {
         isLoadingMore = true
         let generation = loadGeneration
         let nextPage = page + 1
-        defer { isLoadingMore = false }
-        do {
-            let result = try await fetch(category, nextPage)
-            guard generation == loadGeneration else { return }
-            page = nextPage
-            let existing = Set(rooms.map(\.roomID))
-            rooms.append(contentsOf: result.items.filter { !existing.contains($0.roomID) })
-            hasMore = result.hasMore
-        } catch {
-            guard generation == loadGeneration else { return }
-            hasMore = false
+        let task = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if generation == self.loadGeneration {
+                    self.isLoadingMore = false
+                    self.loadMoreTask = nil
+                }
+            }
+            do {
+                let result = try await self.fetch(self.category, nextPage)
+                guard generation == self.loadGeneration, !Task.isCancelled else { return }
+                self.page = nextPage
+                let existing = Set(self.rooms.map(\.roomID))
+                self.rooms.append(contentsOf: result.items.filter { !existing.contains($0.roomID) })
+                self.hasMore = result.hasMore
+            } catch {
+                // 瞬时错误或取消不锁死 hasMore，继续滚动时可自动重试
+            }
         }
+        loadMoreTask = task
+        await task.value
     }
 }
 
@@ -304,37 +377,109 @@ final class SearchStore {
     var rooms: [LiveRoomItem] = []
     var anchors: [LiveAnchorItem] = []
     var phase: LoadPhase = .idle
+    var isLoadingMore = false
 
-    private var task: Task<Void, Never>?
+    private var page = 1
+    private var hasMore = false
+    private var activeKeyword = ""
+    private var searchGeneration = 0
+    @ObservationIgnored private var task: Task<Void, Never>?
+    @ObservationIgnored private var loadMoreTask: Task<Void, Never>?
 
     func search() {
         let trimmed = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
+        searchGeneration += 1
         task?.cancel()
+        task = nil
+        loadMoreTask?.cancel()
+        loadMoreTask = nil
+        isLoadingMore = false
+        page = 1
+        hasMore = false
         guard !trimmed.isEmpty else {
+            activeKeyword = ""
             rooms = []
             anchors = []
             phase = .idle
             return
         }
+        activeKeyword = trimmed
+        let generation = searchGeneration
+        let currentScope = scope
         phase = .loading
-        task = Task { [scope] in
+        task = Task { [weak self] in
+            guard let self else { return }
             do {
-                switch scope {
+                switch currentScope {
                 case .rooms:
                     let result = try await Sites.douyu.searchRooms(trimmed, page: 1)
-                    guard !Task.isCancelled else { return }
-                    rooms = result.items
+                    guard !Task.isCancelled, generation == self.searchGeneration else { return }
+                    self.rooms = result.items
+                    self.hasMore = result.hasMore
                 case .anchors:
                     let result = try await Sites.douyu.searchAnchors(trimmed, page: 1)
-                    guard !Task.isCancelled else { return }
-                    anchors = result.items
+                    guard !Task.isCancelled, generation == self.searchGeneration else { return }
+                    self.anchors = result.items
+                    self.hasMore = result.hasMore
                 }
-                phase = .loaded
+                self.phase = .loaded
+            } catch is CancellationError {
+                return
             } catch {
-                guard !Task.isCancelled else { return }
-                phase = .failed(error.localizedDescription)
+                guard !Task.isCancelled, generation == self.searchGeneration else { return }
+                self.phase = .failed(error.localizedDescription)
             }
         }
+    }
+
+    func loadMoreIfNeeded(currentRoom item: LiveRoomItem) async {
+        guard scope == .rooms, hasMore, !isLoadingMore, phase == .loaded, !activeKeyword.isEmpty else { return }
+        guard let index = rooms.firstIndex(of: item), index >= rooms.count - 6 else { return }
+        await loadMore(for: .rooms)
+    }
+
+    func loadMoreIfNeeded(currentAnchor item: LiveAnchorItem) async {
+        guard scope == .anchors, hasMore, !isLoadingMore, phase == .loaded, !activeKeyword.isEmpty else { return }
+        guard let index = anchors.firstIndex(of: item), index >= anchors.count - 6 else { return }
+        await loadMore(for: .anchors)
+    }
+
+    private func loadMore(for currentScope: Scope) async {
+        isLoadingMore = true
+        let generation = searchGeneration
+        let nextPage = page + 1
+        let query = activeKeyword
+        let task = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if generation == self.searchGeneration {
+                    self.isLoadingMore = false
+                    self.loadMoreTask = nil
+                }
+            }
+            do {
+                switch currentScope {
+                case .rooms:
+                    let result = try await Sites.douyu.searchRooms(query, page: nextPage)
+                    guard generation == self.searchGeneration, !Task.isCancelled else { return }
+                    self.page = nextPage
+                    let existing = Set(self.rooms.map(\.roomID))
+                    self.rooms.append(contentsOf: result.items.filter { !existing.contains($0.roomID) })
+                    self.hasMore = result.hasMore
+                case .anchors:
+                    let result = try await Sites.douyu.searchAnchors(query, page: nextPage)
+                    guard generation == self.searchGeneration, !Task.isCancelled else { return }
+                    self.page = nextPage
+                    let existing = Set(self.anchors.map(\.roomID))
+                    self.anchors.append(contentsOf: result.items.filter { !existing.contains($0.roomID) })
+                    self.hasMore = result.hasMore
+                }
+            } catch {
+                // 瞬时错误或取消不锁死 hasMore
+            }
+        }
+        loadMoreTask = task
+        await task.value
     }
 }
 
@@ -471,7 +616,7 @@ final class RoomStore {
     func configure(settings: AppSettings, library: LibraryStore) {
         self.settings = settings
         self.library = library
-        isDanmakuVisible = danmakuVisibilityOverride ?? settings.data.danmakuVisibleByDefault
+        isDanmakuVisible = danmakuVisibilityOverride ?? settings.danmakuVisibleByDefault
     }
 
     func load(selection: Selection? = nil) async {
@@ -487,8 +632,8 @@ final class RoomStore {
                 guard isCurrentRequest(generation) else { return }
                 detail = loaded
                 phase = .loaded
-                if let settings, settings.data.historyEnabled {
-                    library?.recordHistory(detail: loaded, limit: settings.data.historyLimit)
+                if let settings, settings.historyEnabled {
+                    library?.recordHistory(detail: loaded, limit: settings.historyLimit)
                 }
                 await startDanmaku(detail: loaded)
                 guard isCurrentRequest(generation) else { return }
@@ -532,18 +677,18 @@ final class RoomStore {
             return preference.index(in: qualities.count, lastQualityName: nil, names: qualities.map(\.quality))
         }
         guard let settings, !qualities.isEmpty else { return 0 }
-        let index = settings.data.qualityPreference.index(
+        let index = settings.qualityPreference.index(
             in: qualities.count,
-            lastQualityName: settings.data.lastQualityName,
+            lastQualityName: settings.lastQualityName,
             names: qualities.map(\.quality)
         )
         return min(max(index, 0), qualities.count - 1)
     }
 
     /// 当前是否被设置为「不自动播放」
-    var autoPlayEnabled: Bool { settings?.data.autoPlay ?? true }
-    var backgroundAudioEnabled: Bool { settings?.data.backgroundAudio ?? true }
-    var showResolutionBadge: Bool { settings?.data.showResolutionBadge ?? true }
+    var autoPlayEnabled: Bool { settings?.autoPlay ?? true }
+    var backgroundAudioEnabled: Bool { settings?.backgroundAudio ?? true }
+    var showResolutionBadge: Bool { settings?.showResolutionBadge ?? true }
     var danmakuRenderSettings: DanmakuSettings {
         settings?.danmakuSettings ?? DanmakuSettings()
     }
@@ -564,7 +709,7 @@ final class RoomStore {
             currentLineIndex = fresh.index(forLineID: previousLine)
             lastStreamChangeWasReconnect = false
             playURL = fresh
-            if remember, remembersQuality { settings?.data.lastQualityName = quality.quality }
+            if remember, remembersQuality { settings?.lastQualityName = quality.quality }
             clearStreamNotice()
             offlineNotice = nil
             return true
@@ -644,19 +789,41 @@ final class RoomStore {
         // 续接只需要一条线路。只解析目标线路，弱网下少几次接口往返；其余线路沿用旧地址，
         // 过期了也只会在手动切线时触发一次 403 续签。
         let target = Self.replacementLine(in: current, previous: previousLine, rotate: rotateLine)
-        let fresh = try await site.playURL(detail: detail, quality: quality, lineIDs: target.map { [$0] } ?? [])
-        try Task.checkCancellation()
-        try requireUsable(fresh)
-        // 只有恰好拿回目标线路时才合并。站点退回全量解析（目标线路坏了、或不支持按线路取）
-        // 时，结果就是完整线路表，按原逻辑处理，不保留已消失线路的过期地址。
-        if let current, let target, fresh.lineIDs == [target] {
-            let merged = current.merging(fresh)
-            return PreparedPlaybackStream(stream: merged, lineIndex: merged.index(forLineID: target), qualityName: quality.quality)
+        do {
+            let fresh = try await site.playURL(detail: detail, quality: quality, lineIDs: target.map { [$0] } ?? [])
+            try Task.checkCancellation()
+            try requireUsable(fresh)
+            // 只有恰好拿回目标线路时才合并。站点退回全量解析（目标线路坏了、或不支持按线路取）
+            // 时，结果就是完整线路表，按原逻辑处理，不保留已消失线路的过期地址。
+            if let current, let target, fresh.lineIDs == [target] {
+                let merged = current.merging(fresh)
+                return PreparedPlaybackStream(stream: merged, lineIndex: merged.index(forLineID: target), qualityName: quality.quality)
+            }
+            let matched = fresh.index(forLineID: previousLine)
+            let exists = previousLine.map { fresh.lineIDs.contains($0) } ?? false
+            let index = rotateLine && exists && fresh.urls.count > 1 ? (matched + 1) % fresh.urls.count : matched
+            return PreparedPlaybackStream(stream: fresh, lineIndex: index, qualityName: quality.quality)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            try Task.checkCancellation()
+            if let reason = await confirmOfflineNotice() {
+                offlineNotice = reason
+                LiveDiagnostics.record("room.offlineConfirmed", roomID: roomID)
+                throw LiveStreamOfflineError(reason: reason)
+            }
+            throw error
         }
-        let matched = fresh.index(forLineID: previousLine)
-        let exists = previousLine.map { fresh.lineIDs.contains($0) } ?? false
-        let index = rotateLine && exists && fresh.urls.count > 1 ? (matched + 1) % fresh.urls.count : matched
-        return PreparedPlaybackStream(stream: fresh, lineIndex: index, qualityName: quality.quality)
+    }
+
+    private func confirmOfflineNotice() async -> String? {
+        guard let first = try? await site.roomBrief(roomID: roomID), !Task.isCancelled else { return nil }
+        guard !first.isLiving else { return nil }
+        try? await Task.sleep(for: .milliseconds(300))
+        guard !Task.isCancelled,
+              let confirmed = try? await site.roomBrief(roomID: roomID), !Task.isCancelled,
+              !confirmed.isLiving else { return nil }
+        return confirmed.isRecord ? "当前为轮播内容" : "主播已下播"
     }
 
     /// 续接的目标线路：保持当前线路，或轮转到下一条。没有线路身份时返回 nil（解析全部线路）。

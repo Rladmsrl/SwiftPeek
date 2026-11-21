@@ -173,6 +173,9 @@ final class ReplayPlayer {
                     guard let self, item === self.player.currentItem else { return }
                     let size = item.presentationSize
                     self.videoSize = size.width > 0 ? size : nil
+                    #if os(macOS)
+                    self.floating.updateVideoSize(self.videoSize)
+                    #endif
                 }
             },
         ]
@@ -217,11 +220,12 @@ final class ReplayPlayer {
         let seekToken = seekGeneration
         player.seek(to: Self.time(start), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self, weak item] finished in
             Task { @MainActor in
-                guard let self, let item, finished, self.itemGeneration == token,
+                guard let self, let item, self.itemGeneration == token,
                       self.seekGeneration == seekToken, item === self.player.currentItem,
                       self.state == .loading else { return }
                 self.seekTarget = nil
-                self.currentTime = start
+                let actual = self.player.currentTime().seconds
+                self.currentTime = finished ? start : (actual.isFinite ? actual : start)
                 self.state = .paused
                 if self.pendingAutoplay { self.play() }
             }
@@ -281,11 +285,12 @@ final class ReplayPlayer {
         seekGeneration += 1
         let seekToken = seekGeneration
         let token = itemGeneration
-        player.seek(to: Self.time(clamped), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
+        player.seek(to: Self.time(clamped), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
             Task { @MainActor in
-                guard let self, finished, self.itemGeneration == token, self.seekGeneration == seekToken else { return }
+                guard let self, self.itemGeneration == token, self.seekGeneration == seekToken else { return }
                 self.seekTarget = nil
-                self.currentTime = self.player.currentTime().seconds.isFinite ? self.player.currentTime().seconds : clamped
+                let actual = self.player.currentTime().seconds
+                self.currentTime = actual.isFinite ? actual : clamped
             }
         }
     }
@@ -300,9 +305,12 @@ final class ReplayPlayer {
         guard seekTarget == nil, time.seconds.isFinite else { return }
         currentTime = time.seconds
         onTick?(currentTime)
-        if let range = player.currentItem?.loadedTimeRanges.last?.timeRangeValue {
-            let end = range.end.seconds
-            if end.isFinite { bufferedTime = end }
+        if let ranges = player.currentItem?.loadedTimeRanges {
+            let active = ranges.map(\.timeRangeValue).first { range in
+                let start = range.start.seconds, end = range.end.seconds
+                return start.isFinite && end.isFinite && currentTime >= start - 1 && currentTime <= end + 1
+            } ?? ranges.last?.timeRangeValue
+            if let end = active?.end.seconds, end.isFinite { bufferedTime = end }
         }
     }
 
@@ -395,6 +403,17 @@ final class ReplayPlayer {
             }
             return
         }
+        let shouldKeepPlaying = isPlaying || (state == .loading && pendingAutoplay)
+        #if os(iOS)
+        if backgroundAudioAllowed, !(pip?.canStartPictureInPictureAutomaticallyFromInline ?? false) {
+            playerLayer.player = nil
+            if resumeAfterBackground {
+                resumeAfterBackground = false
+                play()
+            }
+            return
+        }
+        #endif
         // Match live playback's grace period for automatic PiP's willStart.
         backgroundTask = Task { [weak self] in
             do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
@@ -403,13 +422,12 @@ final class ReplayPlayer {
                 #if os(iOS)
                 self.playerLayer.player = nil
                 #endif
-                if self.resumeAfterBackground {
+                if self.resumeAfterBackground || (shouldKeepPlaying && self.pendingAutoplay && !self.isPlaying) {
                     self.resumeAfterBackground = false
                     self.play()
                 }
             } else {
-                self.resumeAfterBackground = self.resumeAfterBackground || self.isPlaying
-                    || (self.state == .loading && self.pendingAutoplay)
+                self.resumeAfterBackground = self.resumeAfterBackground || shouldKeepPlaying
                 self.pendingAutoplay = false
                 self.player.pause()
                 self.syncState()
@@ -582,6 +600,7 @@ private final class ReplayPiPDelegate: NSObject, AVPictureInPictureControllerDel
     }
     func pictureInPictureController(_ controller: AVPictureInPictureController,
                                    restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void) {
+        MainActor.assumeIsolated { player?.onPiPRestore?() }
         completionHandler(true)
     }
 }
@@ -620,20 +639,36 @@ struct ReplayVideoView: UIViewRepresentable {
         let view = HostView()
         view.backgroundColor = .black
         view.isUserInteractionEnabled = false
-        view.layer.addSublayer(player.playerLayer)
         view.onAttach = onAttach
+        view.hostedLayer = player.playerLayer
         return view
     }
 
     func updateUIView(_ uiView: HostView, context: Context) {
-        if player.playerLayer.superlayer !== uiView.layer { uiView.layer.addSublayer(player.playerLayer) }
+        uiView.onAttach = onAttach
+        uiView.hostedLayer = player.playerLayer
     }
 
     final class HostView: UIView {
         var onAttach: (() -> Void)?
+        var hostedLayer: AVPlayerLayer? {
+            didSet {
+                if oldValue === hostedLayer, hostedLayer?.superlayer === layer { return }
+                if oldValue?.superlayer === layer { oldValue?.removeFromSuperlayer() }
+                if let hostedLayer {
+                    layer.addSublayer(hostedLayer)
+                    setNeedsLayout()
+                    if window != nil { onAttach?() }
+                }
+            }
+        }
         override func layoutSubviews() {
             super.layoutSubviews()
-            layer.sublayers?.forEach { if $0 is AVPlayerLayer { $0.frame = bounds } }
+            guard hostedLayer?.superlayer === layer else { return }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            hostedLayer?.frame = bounds
+            CATransaction.commit()
         }
         override func didMoveToWindow() {
             super.didMoveToWindow()
@@ -650,24 +685,34 @@ struct ReplayVideoView: NSViewRepresentable {
         let view = HostView()
         view.wantsLayer = true
         view.layer?.backgroundColor = NSColor.black.cgColor
-        if !player.isInFloatingWindow { view.layer?.addSublayer(player.playerLayer) }
         view.onAttach = onAttach
+        if !player.isInFloatingWindow { view.hostedLayer = player.playerLayer }
         return view
     }
 
     func updateNSView(_ nsView: HostView, context: Context) {
+        nsView.onAttach = onAttach
         guard !player.isInFloatingWindow else { return }
-        if player.playerLayer.superlayer !== nsView.layer { nsView.layer?.addSublayer(player.playerLayer) }
+        nsView.hostedLayer = player.playerLayer
     }
 
     final class HostView: NSView {
         var onAttach: (() -> Void)?
+        var hostedLayer: AVPlayerLayer? {
+            didSet {
+                if oldValue === hostedLayer, hostedLayer?.superlayer === layer { return }
+                if oldValue?.superlayer === layer { oldValue?.removeFromSuperlayer() }
+                if let hostedLayer {
+                    layer?.addSublayer(hostedLayer)
+                    needsLayout = true
+                    if window != nil { DispatchQueue.main.async { [weak self] in self?.onAttach?() } }
+                }
+            }
+        }
         override func layout() {
             super.layout()
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            layer?.sublayers?.forEach { if $0 is AVPlayerLayer { $0.frame = bounds } }
-            CATransaction.commit()
+            guard let hostedLayer, let layer else { return }
+            VideoLayerLayout.resize(hostedLayer, ownedBy: layer, bounds: bounds)
         }
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()

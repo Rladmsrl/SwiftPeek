@@ -167,24 +167,29 @@ public struct DouyuSite: LiveSite {
         let room = try await fetchRoomInfo(roomID)
         let state = try Self.parseRoomState(room)
 
+        let canonicalID = room["room_id"].string ?? roomID
+        // 字母靓号（如 douyu.com/yjj）无法通过纯数字签名校验，必须用 betard 返回的规范数字房间号；
+        // 数字短号/别名房保留原号，与 homeH5Enc 约定保持一致。
+        let signRoomID = (!roomID.isEmpty && roomID.allSatisfy({ $0.isASCII && $0.isNumber })) ? roomID : canonicalID
+
         // 开播时间与签名脚本可以并发取，减少首屏等待
-        async let showTimeTask = fetchShowTime(roomID)
-        async let roomJSTask = fetchSignScript(roomID)
+        async let showTimeTask = fetchShowTime(signRoomID)
+        async let roomJSTask = fetchSignScript(signRoomID)
         let showTime = try? await showTimeTask
         let roomJS = try await roomJSTask
-        await Self.signScripts.store(roomJS, for: roomID)
+        await Self.signScripts.store(roomJS, for: signRoomID)
 
         // 签名要执行一整份 CryptoJS 和房间下发的混淆脚本，不能占着主线程。
         let signedAt = Date()
         let signArgs = try await Self.computeSign(
             roomJS: roomJS,
-            roomID: roomID,
+            roomID: signRoomID,
             timestamp: Int(signedAt.timeIntervalSince1970)
         )
         let isLoop = state.isRecord
 
         return LiveRoomDetail(
-            roomID: room["room_id"].stringValue,
+            roomID: canonicalID,
             title: Self.htmlUnescape(room["room_name"].stringValue),
             cover: room["room_pic"].stringValue,
             userName: room["owner_name"].stringValue,
@@ -193,8 +198,8 @@ public struct DouyuSite: LiveSite {
             introduction: room["show_details"].string,
             notice: nil,
             isLiving: state.isLiving,
-            payload: DouyuRoomPayload(signArgs: signArgs, signRoomID: roomID, signedAt: signedAt),
-            danmakuPayload: DouyuDanmakuPayload(roomID: room["room_id"].stringValue),
+            payload: DouyuRoomPayload(signArgs: signArgs, signRoomID: signRoomID, signedAt: signedAt),
+            danmakuPayload: DouyuDanmakuPayload(roomID: canonicalID),
             isRecord: isLoop,
             url: "https://www.douyu.com/\(roomID)",
             showTime: showTime
@@ -527,6 +532,9 @@ public struct DouyuSite: LiveSite {
             query: ["kw": keyword, "page": "\(page)", "pageSize": "20", "filterType": "1"],
             headers: searchHeaders()
         )
+        if result["error"].intValue != 0 {
+            throw LiveCoreError(result["msg"].string ?? "斗鱼搜索失败")
+        }
         let list = result["data"]["relateUser"].array
         let items = list.map { item -> LiveAnchorItem in
             let info = item["anchorInfo"]

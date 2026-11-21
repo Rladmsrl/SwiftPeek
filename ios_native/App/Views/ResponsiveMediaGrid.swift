@@ -45,8 +45,12 @@ struct ResponsiveMediaGrid<Content: View>: View {
 
     var body: some View {
         LazyVGrid(columns: columns, spacing: rowSpacing) {
-            ForEach(subviews: content()) { card in
-                card.modifier(HorizontalFoldAvoidance())
+            if #available(iOS 27.1, *) {
+                ForEach(subviews: content()) { card in
+                    card.modifier(HorizontalFoldAvoidance())
+                }
+            } else {
+                content()
             }
         }
             .padding(.leading, leadingInset)

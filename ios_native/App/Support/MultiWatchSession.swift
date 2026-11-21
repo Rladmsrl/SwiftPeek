@@ -52,13 +52,13 @@ final class MultiWatchSession<Player: MobilePlaybackEngine> {
     var danmakuMode: MultiWatchDanmakuMode = .selected {
         didSet {
             guard danmakuMode != oldValue else { return }
-            settings?.data.multiWatchDanmakuMode = danmakuMode
+            settings?.multiWatchDanmakuMode = danmakuMode
             reconcileResources()
         }
     }
     private(set) var backgrounded = false
     private(set) var constrained = false
-    private var pipID: String?
+    private(set) var pipID: String?
     private var settings: AppSettings?
     private var library: LibraryStore?
     private let makePlayer: () -> Player
@@ -93,7 +93,7 @@ final class MultiWatchSession<Player: MobilePlaybackEngine> {
     func configure(settings: AppSettings, library: LibraryStore) {
         self.settings = settings
         self.library = library
-        danmakuMode = settings.data.multiWatchDanmakuMode
+        danmakuMode = settings.multiWatchDanmakuMode
     }
 
     func present() {

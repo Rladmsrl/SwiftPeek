@@ -100,6 +100,15 @@ final class ReplayDanmakuFeed {
         if messages.count > messageLimit { messages.removeFirst(messages.count - messageLimit) }
         recent.append(contentsOf: fresh)
         if recent.count > recentLimit { recent.removeFirst(recent.count - recentLimit) }
+        if buffer.count > 4000 {
+            let cutoff = start - 120
+            let pruneCount = firstIndex(after: cutoff)
+            if pruneCount > 500 {
+                buffer.removeFirst(pruneCount)
+                loadedFrom = buffer.first?.offset ?? max(loadedFrom, cutoff)
+                seen = Set(buffer.map(\.id))
+            }
+        }
     }
 
     /// 第一条 offset 严格大于 time 的位置
@@ -158,8 +167,10 @@ final class ReplayDanmakuFeed {
         retryAfter = nil
         let fresh = batch.items.filter { seen.insert($0.id).inserted }
         let wasEmpty = buffer.isEmpty
+        let previousLast = buffer.last?.offset
         buffer.append(contentsOf: fresh)
-        if !wasEmpty, let first = fresh.first, first.offset < buffer[buffer.count - fresh.count - 1].offset {
+        let freshUnordered = zip(fresh, fresh.dropFirst()).contains { $0.offset > $1.offset }
+        if freshUnordered || (previousLast != nil && (fresh.first.map { $0.offset < previousLast! } ?? false)) {
             buffer.sort { $0.offset < $1.offset }
         }
         nextStart = batch.nextStart
@@ -190,6 +201,8 @@ final class ReplayDanmakuHeat {
     func start(duration: TimeInterval, maxRequests: Int = 40,
                load: @escaping @Sendable (Int) async throws -> DouyuReplayDanmakuBatch) {
         task?.cancel()
+        bins = []
+        isComplete = false
         guard duration > 0 else { return }
         task = Task { [weak self] in
             var counts = [Int](repeating: 0, count: Self.binCount)

@@ -25,7 +25,12 @@ actor LiveTagBuffer {
         /// The producer is waiting for room, so silence on the socket is expected.
         let capacityLimited: Bool
     }
-    private var queue: [FLVTag] = []
+    private struct Entry {
+        let tag: FLVTag
+        /// 单调递增的虚拟时间戳（毫秒）：推流端时间轴回退重启时接在旧时间轴后，避免缓冲时长归零。
+        let timelineMS: Int64?
+    }
+    private var queue: [Entry] = []
     private var cursor = 0
     private var bytes = 0
     private var videoHeader: FLVTag?
@@ -35,6 +40,9 @@ actor LiveTagBuffer {
     /// Newest media timestamp seen, not the last pushed: audio and video interleave
     /// with small inversions, and an unsigned difference would wrap to ~49 days.
     private var lastTimestamp: UInt32?
+    private var timelineOffsetMS: Int64 = 0
+    private var virtualFirstMS: Int64?
+    private var virtualLastMS: Int64?
     private var ended = false
     private var error: Error?
     private var capacityLimited = false
@@ -119,25 +127,36 @@ actor LiveTagBuffer {
     }
 
     private func push(_ tag: FLVTag) {
-        queue.append(tag)
+        var timelineMS: Int64?
+        if isMedia(tag) {
+            if let last = lastTimestamp, Int64(tag.timestamp) < Int64(last) - 1000 {
+                // 推流端重启导致时间戳大幅回退：将新时间轴平移接到旧队尾之后，保持缓冲时长连续。
+                let anchor = virtualLastMS ?? Int64(last)
+                timelineOffsetMS = anchor - Int64(tag.timestamp)
+                lastTimestamp = tag.timestamp
+            } else {
+                lastTimestamp = lastTimestamp.map { max($0, tag.timestamp) } ?? tag.timestamp
+            }
+            let virtual = timelineOffsetMS + Int64(tag.timestamp)
+            timelineMS = virtual
+            if firstTimestamp == nil {
+                firstTimestamp = tag.timestamp
+                virtualFirstMS = virtual
+            }
+            virtualLastMS = virtualLastMS.map { max($0, virtual) } ?? virtual
+        }
+        queue.append(Entry(tag: tag, timelineMS: timelineMS))
         bytes += tag.payload.count
         wakeConsumer()
-        if isMedia(tag) {
-            if firstTimestamp == nil { firstTimestamp = tag.timestamp }
-            // A large backward step is a new timeline (publisher restart); restart the maximum there.
-            if let last = lastTimestamp, Int64(tag.timestamp) >= Int64(last) - 1000 {
-                lastTimestamp = max(last, tag.timestamp)
-            } else {
-                lastTimestamp = tag.timestamp
-            }
-        }
     }
     private func isMedia(_ tag: FLVTag) -> Bool {
-        tag.payload.count > 1 && tag.payload[1] == 1
+        guard tag.payload.count > 1 else { return false }
+        let idx = tag.payload.index(after: tag.payload.startIndex)
+        return tag.payload[idx] == 1
     }
     private var seconds: Double {
-        guard let firstTimestamp, let lastTimestamp else { return 0 }
-        return Double(max(0, Int64(lastTimestamp) - Int64(firstTimestamp))) / 1000
+        guard let virtualFirstMS, let virtualLastMS else { return 0 }
+        return Double(max(0, virtualLastMS - virtualFirstMS)) / 1000
     }
     func snapshot() -> Snapshot {
         Snapshot(seconds: seconds, bytes: bytes, count: queue.count - cursor,
@@ -146,21 +165,62 @@ actor LiveTagBuffer {
     }
     func pop() -> FLVTag? {
         guard cursor < queue.count else { return nil }
-        let tag = queue[cursor]
+        let entry = queue[cursor]
         cursor += 1
-        bytes -= tag.payload.count
+        bytes -= entry.tag.payload.count
         // Drop consumed payload references promptly; compact once per batch.
         if cursor >= 128 || cursor == queue.count {
             queue.removeFirst(cursor)
             cursor = 0
         }
-        firstTimestamp = queue[cursor...].first(where: isMedia)?.timestamp
-        if firstTimestamp == nil { lastTimestamp = nil }
+        if let head = queue[cursor...].first(where: { $0.timelineMS != nil }) {
+            firstTimestamp = head.tag.timestamp
+            virtualFirstMS = head.timelineMS
+        } else {
+            firstTimestamp = nil
+            lastTimestamp = nil
+            virtualFirstMS = nil
+            virtualLastMS = nil
+            timelineOffsetMS = 0
+        }
         if spaceWaiter != nil, !isFull(adding: pendingBytes),
            seconds <= Self.maximumSeconds - Self.refillMargin || cursor == queue.count {
             wakeProducer()
         }
-        return tag
+        return entry.tag
+    }
+
+    /// 一次 Actor 跳切同时批量出队并带回最新快照，避免每帧 2 次以上 Actor 切换。
+    func popBatch(maxCount: Int) -> (tags: [FLVTag], snapshot: Snapshot) {
+        guard maxCount > 0, cursor < queue.count else { return ([], snapshot()) }
+        let take = min(maxCount, queue.count - cursor)
+        var result: [FLVTag] = []
+        result.reserveCapacity(take)
+        for _ in 0..<take {
+            let entry = queue[cursor]
+            cursor += 1
+            bytes -= entry.tag.payload.count
+            result.append(entry.tag)
+        }
+        if cursor >= 128 || cursor == queue.count {
+            queue.removeFirst(cursor)
+            cursor = 0
+        }
+        if let head = queue[cursor...].first(where: { $0.timelineMS != nil }) {
+            firstTimestamp = head.tag.timestamp
+            virtualFirstMS = head.timelineMS
+        } else {
+            firstTimestamp = nil
+            lastTimestamp = nil
+            virtualFirstMS = nil
+            virtualLastMS = nil
+            timelineOffsetMS = 0
+        }
+        if spaceWaiter != nil, !isFull(adding: pendingBytes),
+           seconds <= Self.maximumSeconds - Self.refillMargin || cursor == queue.count {
+            wakeProducer()
+        }
+        return (result, snapshot())
     }
     func finish(_ error: Error?) {
         ended = true
@@ -255,6 +315,7 @@ actor LiveReplacementMailbox {
     enum Outcome {
         case ready(ReadyLiveReplacement)
         case failed(String)
+        case giveUp(String)
     }
     private var result: Outcome?
     private var closed = false

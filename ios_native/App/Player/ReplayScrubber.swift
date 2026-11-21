@@ -13,6 +13,7 @@ struct ReplayScrubber: View {
 
     @State private var dragFraction: Double?
     @State private var hoverFraction: Double?
+    @State private var previewWidth: CGFloat = 120
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let heatHeight: CGFloat = 16
@@ -35,9 +36,12 @@ struct ReplayScrubber: View {
                     .frame(width: active ? 14 : 10, height: active ? 14 : 10)
                     .position(x: width * fraction, y: trackY)
                 if let preview = dragFraction ?? hoverFraction {
+                    let half = min(width / 2, previewWidth / 2)
+                    let clampedX = min(max(width * preview, half), max(half, width - half))
                     previewLabel(for: preview)
                         .fixedSize()
-                        .position(x: min(max(width * preview, 60), width - 60), y: -16)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { previewWidth = $0 }
+                        .position(x: clampedX, y: -16)
                         .allowsHitTesting(false)
                 }
             }

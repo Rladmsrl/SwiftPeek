@@ -33,7 +33,7 @@ struct SimpleLiveApp: App {
                 .environment(library)
                 .environment(router)
                 .environment(multiWatch)
-                .preferredColorScheme(settings.data.appearance.colorScheme)
+                .appAppearance()
                 .onOpenURL { url in
                     if !followTransfer.receive(url) { router.handle(url: url) }
                 }
@@ -55,9 +55,24 @@ struct SimpleLiveApp: App {
                         .environment(settings)
                         .environment(library)
                         .tint(Theme.accent)
-                        .preferredColorScheme(settings.data.appearance.colorScheme)
+                        .appAppearance()
                 }
         }
+    }
+}
+
+private struct AppAppearance: ViewModifier {
+    @Environment(AppSettings.self) private var settings
+
+    // 只有这个修饰器订阅外观设置，改其他设置时不会触发整个 App 根视图重算
+    func body(content: Content) -> some View {
+        content.preferredColorScheme(settings.appearance.colorScheme)
+    }
+}
+
+private extension View {
+    func appAppearance() -> some View {
+        modifier(AppAppearance())
     }
 }
 

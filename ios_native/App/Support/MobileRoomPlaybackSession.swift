@@ -32,7 +32,7 @@ final class MobileRoomPlaybackSession<Player: MobilePlaybackEngine> {
     private var resumeAfterBackground = false
     private var isBackgrounded = false
     private var backgroundAudio = true
-    private var pictureInPictureActive = false
+    private(set) var isPictureInPictureActive = false
     private var generation = 0
     private var operation: Task<Void, Never>?
     private var backgroundTask: Task<Void, Never>?
@@ -67,10 +67,10 @@ final class MobileRoomPlaybackSession<Player: MobilePlaybackEngine> {
     func open(settings: AppSettings, library: LibraryStore, autoPlay: Bool? = nil) {
         self.settings = settings
         self.library = library
-        backgroundAudio = settings.data.backgroundAudio
-        if !opened { player.volume = settings.data.playerVolume }
+        backgroundAudio = settings.backgroundAudio
+        if !opened { player.volume = settings.playerVolume }
         updateInterruptionObservation()
-        activate(autoPlay: autoPlay ?? settings.data.autoPlay)
+        activate(autoPlay: autoPlay ?? settings.autoPlay)
         // 页面出现且要播放（自动播放、或之前被让出）时接管前台：其他单画面页面暂停，自己续播。
         // 用户手动停掉的房间切回来不抢，避免无故打断另一个 Tab 里还在播的页面。
         if wantsPlayback { claimForeground() }
@@ -141,7 +141,7 @@ final class MobileRoomPlaybackSession<Player: MobilePlaybackEngine> {
         operation?.cancel()
         backgroundTask?.cancel()
         telemetry?.cancel()
-        if !managedByMultiWatch { settings?.data.playerVolume = player.volume }
+        if !managedByMultiWatch { settings?.playerVolume = player.volume }
         store.cancelPendingStreamRequest()
         player.onPrepareStream = nil
         player.onCommitStream = nil
@@ -152,7 +152,7 @@ final class MobileRoomPlaybackSession<Player: MobilePlaybackEngine> {
         LiveDiagnostics.record("room.close", roomID: roomID, fields: player.diagnosticFields)
     }
 
-    private var mayPlay: Bool { wantsPlayback && !suspended && (!isBackgrounded || backgroundAudio || pictureInPictureActive) }
+    private var mayPlay: Bool { wantsPlayback && !suspended && (!isBackgrounded || backgroundAudio || isPictureInPictureActive) }
     var playbackRequested: Bool { wantsPlayback && (player.isActive || isWorking) }
     private func current(_ token: Int) -> Bool { opened && token == generation && !Task.isCancelled }
     private func beginOperation() -> Int {
@@ -260,7 +260,7 @@ final class MobileRoomPlaybackSession<Player: MobilePlaybackEngine> {
     }
     /// Weak-network downgrade applies to this room only; the default preference is untouched.
     private func lowerQualityForWeakNetwork() {
-        guard opened, wantsPlayback, !isWorking, settings?.data.autoLowerQuality == true,
+        guard opened, wantsPlayback, !isWorking, settings?.autoLowerQuality == true,
               let index = store.lowerQualityIndex else { return }
         let name = store.qualities[index].quality
         LiveDiagnostics.record("room.autoLowerQuality", roomID: roomID, fields: ["quality": name])
@@ -289,7 +289,7 @@ final class MobileRoomPlaybackSession<Player: MobilePlaybackEngine> {
     }
 
     func setBackgroundAudio(_ enabled: Bool) { backgroundAudio = enabled; reconcileBackground() }
-    func setPictureInPictureActive(_ active: Bool) { pictureInPictureActive = active; reconcileBackground() }
+    func setPictureInPictureActive(_ active: Bool) { isPictureInPictureActive = active; reconcileBackground() }
     func setSceneBackgrounded(_ backgrounded: Bool) { isBackgrounded = backgrounded; reconcileBackground() }
     func setSuspended(_ value: Bool) {
         externalSuspended = value
@@ -316,7 +316,7 @@ final class MobileRoomPlaybackSession<Player: MobilePlaybackEngine> {
         backgroundTask?.cancel()
         backgroundTask = nil
         guard opened else { return }
-        if !suspended && (!isBackgrounded || backgroundAudio || pictureInPictureActive) {
+        if !suspended && (!isBackgrounded || backgroundAudio || isPictureInPictureActive) {
             if resumeAfterBackground {
                 resumeAfterBackground = false
                 play()
@@ -327,7 +327,7 @@ final class MobileRoomPlaybackSession<Player: MobilePlaybackEngine> {
         backgroundTask = Task { [weak self] in
             guard let self else { return }
             do { try await Task.sleep(for: self.backgroundGrace) } catch { return }
-            guard self.opened, self.suspended || (self.isBackgrounded && !self.backgroundAudio && !self.pictureInPictureActive) else { return }
+            guard self.opened, self.suspended || (self.isBackgrounded && !self.backgroundAudio && !self.isPictureInPictureActive) else { return }
             guard self.wantsPlayback || self.player.isActive else { return }
             self.resumeAfterBackground = self.resumeAfterBackground || (self.wantsPlayback && (self.player.isActive || self.isWorking))
             self.cancelPlayback()
@@ -347,7 +347,7 @@ final class MobileRoomPlaybackSession<Player: MobilePlaybackEngine> {
         backgroundTask = nil
         telemetry?.cancel()
         telemetry = nil
-        if !managedByMultiWatch { settings?.data.playerVolume = player.volume }
+        if !managedByMultiWatch { settings?.playerVolume = player.volume }
         #if os(iOS)
         MobilePlaybackInterruption.shared.remove(interruptionToken)
         interruptionToken = nil

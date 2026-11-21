@@ -33,8 +33,14 @@ public enum RoomLink {
             } else {
                 return nil
             }
-        } else if ["https", "http"].contains(scheme), webHosts.contains(host), parts.count == 1 {
-            candidate = parts.first
+        } else if ["https", "http"].contains(scheme), webHosts.contains(host) {
+            if parts.count == 1 {
+                candidate = parts.first
+            } else if parts.count == 2, parts[0] == "room" {
+                candidate = parts[1]
+            } else {
+                return nil
+            }
         } else {
             return nil
         }

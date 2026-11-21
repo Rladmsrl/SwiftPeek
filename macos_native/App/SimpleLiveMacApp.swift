@@ -210,7 +210,7 @@ private struct AppAppearance: ViewModifier {
     @Environment(AppSettings.self) private var settings
     // 只有这个修饰器读取外观设置：改其他设置时不会重建窗口内容（和其中的播放器）
     func body(content: Content) -> some View {
-        content.preferredColorScheme(settings.data.appearance.colorScheme)
+        content.preferredColorScheme(settings.appearance.colorScheme)
     }
 }
 

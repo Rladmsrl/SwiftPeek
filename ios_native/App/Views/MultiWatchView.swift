@@ -9,9 +9,10 @@ struct MultiWatchView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(\.scenePhase) private var scenePhase
     @State private var choosingRooms = false
-    @State private var pip = PiPController()
+    @State private var pipBox = LazyViewObject<PiPController>()
+    private var pip: PiPController { pipBox { PiPController() } }
     @State private var pipRoomID: String?
-    @State private var pipActive = false
+    private var pipActive: Bool { workspace.pipID != nil }
     @State private var tileControlsVisible = true
     @State private var tileControlsHideTask: Task<Void, Never>?
     @State private var showsConstrainedNotice = false
@@ -21,11 +22,11 @@ struct MultiWatchView: View {
 
     var body: some View {
         pipNavigation
-        .onChange(of: settings.data.backgroundAudio) { workspace.refreshSettings() }
-        .onChange(of: settings.data.pictureInPictureDanmaku) { workspace.refreshSettings(); pip.refreshDanmaku() }
+        .onChange(of: settings.backgroundAudio) { workspace.refreshSettings() }
+        .onChange(of: settings.pictureInPictureDanmaku) { workspace.refreshSettings(); pip.refreshDanmaku() }
         .onChange(of: workspace.danmakuMode) { pip.refreshDanmaku() }
         .onChange(of: workspace.pipCandidate?.playback.store.isDanmakuVisible) { pip.refreshDanmaku() }
-        .onChange(of: settings.data.autoPictureInPicture) { configurePiP() }
+        .onChange(of: settings.autoPictureInPicture) { configurePiP() }
         .onChange(of: scenePhase) { _, value in workspace.setBackgrounded(value == .background) }
         .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)) { _ in updateResourcePressure() }
         .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)) { _ in updateResourcePressure() }
@@ -96,7 +97,7 @@ struct MultiWatchView: View {
             let layout = layout(in: geometry)
             MultiWatchPaneLayout(size: geometry.size, frames: layout.tiles) {
                 ForEach(Array(workspace.rooms.enumerated()), id: \.element.id) { index, room in
-                    MultiWatchTile(room: room, pipActive: pipActive && pipRoomID == room.id,
+                    MultiWatchTile(room: room, pipActive: workspace.pipID == room.id,
                                    controlsVisible: tileControlsVisible,
                                    showControls: showTileControls, toggleControls: toggleTileControls)
                         .clipped()
@@ -168,10 +169,11 @@ struct MultiWatchView: View {
                 }
                 Toggle("锁定当前声音", isOn: $workspace.audioLocked)
                 if let room = workspace.pipCandidate {
-                    Button(pipActive ? "退出画中画" : "画中画：\(room.name)", systemImage: "pip.enter") {
+                    Button(pipActive ? "退出画中画" : "画中画：\(room.name)",
+                           systemImage: pipActive ? "pip.exit" : "pip.enter") {
                         configurePiP(); pip.toggle()
                     }
-                    .disabled(!room.playback.player.isActive || !pip.isPossible)
+                    .disabled(!pipActive && !room.playback.player.isActive)
                 }
                 Button("结束全部播放", role: .destructive) { pip.detach(); workspace.finish(stopOrigin: true) }
             } label: { Label("更多", systemImage: "ellipsis") }
@@ -230,27 +232,27 @@ struct MultiWatchView: View {
 
     private func configurePiP() {
         guard workspace.isRunning, let room = workspace.pipCandidate else {
-            pip.detach(); pipRoomID = nil; pipActive = false; workspace.setPiP(nil)
+            pip.detach(); pipRoomID = nil; workspace.setPiP(nil)
             return
         }
         if pipRoomID != room.id {
             pip.detach()
-            pipActive = false
             workspace.setPiP(nil)
             pipRoomID = room.id
         }
-        pip.attach(player: room.playback.player, automatic: settings.data.autoPictureInPicture, settings: settings)
+        pip.attach(player: room.playback.player, automatic: settings.autoPictureInPicture, settings: settings)
         pip.onRequestPlay = { [weak room] in room?.playback.play() }
         pip.onRequestPause = { [weak room] in room?.playback.stopPlayback() }
         pip.isPlaybackRequested = { [weak room] in room?.playback.playbackRequested ?? false }
-        pip.onStateChange = { active in
-            pipActive = active
-            workspace.setPiP(active ? room.id : nil)
+        pip.onStateChange = { [weak workspace, weak room] active in
+            workspace?.setPiP(active ? room?.id : nil)
         }
         pip.danmakuSnapshot = { [weak room, weak settings, weak workspace] in
             guard let room, let settings, let workspace else { return PiPDanmakuSnapshot() }
             return PiPDanmakuSnapshot(messages: room.playback.store.messages, settings: settings.danmakuSettings,
-                                      isVisible: workspace.danmakuMode != .off && settings.data.pictureInPictureDanmaku && room.playback.store.isDanmakuVisible,
+                                      isVisible: workspace.danmakuMode != .off && settings.pictureInPictureDanmaku && room.playback.store.isDanmakuVisible,
+                                      isPaused: !room.playback.playbackRequested,
+                                      frameRevision: room.playback.player.pipFrames.revision,
                                       sourceID: room.id)
         }
     }

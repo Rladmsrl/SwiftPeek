@@ -69,6 +69,8 @@ final class FLVLivePlayer {
     var onCommitStream: (@MainActor (PreparedPlaybackStream) -> Void)?
     /// 带宽跟不上码率、短时间内反复卡顿时调用，由房间层决定是否降清晰度。
     var onSustainedUnderrun: (@MainActor () -> Void)?
+    /// 音频输出设备断开（例如拔出耳机 / 蓝牙断开）时回调；未设置则自动停止播放。
+    var onAudioRouteLost: (@MainActor () -> Void)?
     var isMuted = false {
         didSet { audioRenderer.isMuted = isMuted }
     }
@@ -100,9 +102,13 @@ final class FLVLivePlayer {
     #if os(iOS)
     @ObservationIgnored let pipFrames = PiPLiveFrameSource()
     func pictureInPictureFrame() -> CVPixelBuffer? { pipFrames.frame(at: synchronizer.currentTime()) }
+    func synchronizerTimeAndRate() -> (CMTime, Float) { (synchronizer.currentTime(), synchronizer.rate) }
     #endif
     let audioRenderer = AVSampleBufferAudioRenderer()
     private let synchronizer = AVSampleBufferRenderSynchronizer()
+    @ObservationIgnored private let audioResetLock = NSLock()
+    @ObservationIgnored private var audioNeedsReset = false
+    @ObservationIgnored private var audioFlushObserver: (any NSObjectProtocol)?
 
     /// iOS 18 起图层自身的 enqueue/flush/status 均已废弃，
     /// 统一改用 displayLayer.sampleBufferRenderer
@@ -210,11 +216,19 @@ final class FLVLivePlayer {
         synchronizer.delaysRateChangeUntilHasSufficientMediaData = false
         synchronizer.addRenderer(displayLayer.sampleBufferRenderer)
         synchronizer.addRenderer(audioRenderer)
+        audioFlushObserver = NotificationCenter.default.addObserver(
+            forName: .AVSampleBufferAudioRendererWasFlushedAutomatically,
+            object: audioRenderer,
+            queue: nil
+        ) { [weak self] _ in
+            self?.markAudioReset()
+        }
     }
 
     /// 兜底：视图被销毁而没走到 stop() 时（例如深链直接替换了房间），
     /// 至少要把拉流任务取消，不能留一个还在下行的孤儿播放器。
     deinit {
+        if let audioFlushObserver { NotificationCenter.default.removeObserver(audioFlushObserver) }
         cancelActiveStream()
         streamTask?.cancel()
         #if os(iOS)
@@ -409,6 +423,11 @@ final class FLVLivePlayer {
 
     @MainActor private func configureAudioSession() {
         #if os(iOS)
+        PlaybackAudioSession.shared.register(
+            owner: audioSessionOwner,
+            onInterruptionEnded: { [weak self] in self?.markAudioReset() },
+            onRouteLost: { [weak self] in self?.handleAudioRouteLost() }
+        )
         PlaybackAudioSession.shared.acquire(audioSessionOwner)
         #endif
     }
@@ -418,6 +437,29 @@ final class FLVLivePlayer {
         #if os(iOS)
         PlaybackAudioSession.shared.release(audioSessionOwner)
         #endif
+    }
+
+    private func markAudioReset() {
+        audioResetLock.lock()
+        audioNeedsReset = true
+        audioResetLock.unlock()
+    }
+
+    private func consumeAudioReset() -> Bool {
+        audioResetLock.lock()
+        let needed = audioNeedsReset
+        audioNeedsReset = false
+        audioResetLock.unlock()
+        return needed
+    }
+
+    @MainActor private func handleAudioRouteLost() {
+        guard isActive, !isMuted else { return }
+        if let onAudioRouteLost {
+            onAudioRouteLost()
+        } else {
+            stop()
+        }
     }
 
     // MARK: - 拉流主循环
@@ -562,6 +604,7 @@ final class FLVLivePlayer {
     /// 判断一个错误值不值得重试，以及该怎么重试。
     private func classify(_ error: Error) -> Recovery {
         let message = error.localizedDescription
+        if let offline = error as? LiveStreamOfflineError { return .giveUp(reason: offline.reason) }
         if let http = error as? LiveHTTPError, http.requiresFreshURL { return .needFreshURL(reason: message) }
 
         if let playerError = error as? LivePlayerError {
@@ -679,6 +722,7 @@ final class FLVLivePlayer {
         /// Tags from the active source keep failing to decode: replace it rather than end playback.
         var consecutiveTagErrors = 0
         var brokenSource = false
+        var terminalFailure: String?
         defer {
             sources.cancelAll()
             preparation?.cancel()
@@ -697,6 +741,15 @@ final class FLVLivePlayer {
                 if path.satisfied {
                     policy.networkChanged()
                     networkRenewal = true
+                    if let existing = preparation {
+                        existing.cancel()
+                        preparation = nil
+                        preparationRecovers = false
+                        if let discarded = await mailbox.take(), case .ready(let replacement) = discarded {
+                            replacement.source.cancel()
+                            sources.remove(replacement.source)
+                        }
+                    }
                 }
                 network = path
             }
@@ -734,6 +787,7 @@ final class FLVLivePlayer {
                             mode = "splice"
                         } else {
                             nextContext.timeOffset = await handoffOffset(after: context.lastQueuedEnd, generation: generation)
+                            nextContext.lastQueuedEnd = CMTimeMaximum(context.lastQueuedEnd, nextContext.timeOffset)
                             mode = "append"
                         }
                         let lead = next.firstTimestamp.flatMap { first in context.lastVideoTimestamp.map { Int64(first) - Int64($0) } }
@@ -741,6 +795,7 @@ final class FLVLivePlayer {
                         source = replacement.source
                         initialized = true
                         terminalObserved = false
+                        terminalFailure = nil
                         consecutiveTagErrors = 0
                         brokenSource = false
                         snapshot = next
@@ -769,6 +824,10 @@ final class FLVLivePlayer {
                     else { policy.failed(at: now) }
                     LiveDiagnostics.record("buffer.prepareFailed", fields: ["player": diagnosticID, "error": reason,
                         "online": String(network.satisfied)])
+                case .giveUp(let reason):
+                    terminalFailure = reason
+                    lastError = reason
+                    LiveDiagnostics.record("buffer.prepareGiveUp", fields: ["player": diagnosticID, "reason": reason])
                 }
             }
             // A silent open socket is a dead connection. Detect it from received bytes rather
@@ -782,7 +841,7 @@ final class FLVLivePlayer {
                                                                    holding: !initialized || refill != nil, buffered: snapshot.count)
             let stalled = silent || brokenSource || deliveryStalled
             let healthy = refill == nil && snapshot.seconds >= LiveJitterPolicy.healthyRenewalSeconds
-            if preparation == nil, network.satisfied,
+            if preparation == nil, terminalFailure == nil, network.satisfied,
                policy.begin(now: now, sourceAge: now - source.startedAt, ended: snapshot.ended,
                             stalled: stalled || networkRenewal, healthy: healthy) {
                 let recovering = snapshot.ended || stalled
@@ -796,6 +855,7 @@ final class FLVLivePlayer {
                     : brokenSource ? "decode" : stalled ? "stalled" : "renewal"
                 preparationRecovers = recovering || networkRenewal
                 preparationNetwork = network.generation
+                let expectedNetwork = preparationNetwork
                 networkRenewal = false
                 LiveDiagnostics.record("buffer.prepare", fields: ["player": diagnosticID,
                     "sourceAge": String(now - source.startedAt), "attempt": String(policy.attempts),
@@ -825,6 +885,7 @@ final class FLVLivePlayer {
                             if ready.ended { throw ready.error ?? LivePlayerError.network("备用直播连接提前结束") }
                             if ready.ready || ready.seconds >= minimumSeconds {
                                 try Task.checkCancellation()
+                                guard NetworkPathMonitor.shared.snapshot().generation == expectedNetwork else { return }
                                 await mailbox.put(.ready(ReadyLiveReplacement(source: fresh, selection: selection, minimumSeconds: minimumSeconds)))
                                 published = true
                                 return
@@ -837,7 +898,11 @@ final class FLVLivePlayer {
                         }
                     } catch {
                         guard !Task.isCancelled, self.isCurrent(generation) else { return }
-                        await mailbox.put(.failed(error.localizedDescription))
+                        if case .giveUp(let reason) = self.classify(error) {
+                            await mailbox.put(.giveUp(reason))
+                        } else {
+                            await mailbox.put(.failed(error.localizedDescription))
+                        }
                     }
                 }
             }
@@ -856,75 +921,91 @@ final class FLVLivePlayer {
                 LiveDiagnostics.record("buffer.refilled", fields: ["player": diagnosticID,
                     "bufferSeconds": String(snapshot.seconds), "target": String(hold.target), "waited": String(now - hold.since)])
             }
-            if initialized, refill == nil, let tag = await source.buffer.pop() {
+            if initialized, refill == nil, snapshot.count > 0 {
+                let batch = await source.buffer.popBatch(maxCount: 8)
+                snapshot = batch.snapshot
                 guard isCurrent(generation) else { return }
-                do {
-                    unpublished += tag.payload.count
-                    if unpublished >= 64 * 1024 {
-                        _ = await publishReceived(unpublished, generation: generation)
-                        unpublished = 0
-                    }
-                    try await handle(tag, context: context, generation: generation)
-                    lastDelivery = ProcessInfo.processInfo.systemUptime
-                    consecutiveTagErrors = 0
-                } catch {
-                    guard isCurrent(generation) else { return }
-                    // One malformed tag must not discard seconds of good buffered media.
-                    // Only an unsupported stream is final; anything else drops the tag, and
-                    // a source that keeps failing is replaced like a dead connection.
-                    switch classify(error) {
-                    case .cancelled:
-                        return
-                    case .giveUp(let reason):
-                        await failBuffered(reason, generation: generation)
-                        return
-                    case .retrySameURL(let reason), .needFreshURL(let reason):
-                        if tag.type == .video { context.needsSyncSample = true }
-                        consecutiveTagErrors += 1
-                        lastError = reason
-                        if consecutiveTagErrors == Self.brokenSourceTagErrors {
-                            brokenSource = true
-                            LiveDiagnostics.record("buffer.decodeFailed", fields: ["player": diagnosticID, "error": reason])
+                if !batch.tags.isEmpty {
+                    for tag in batch.tags {
+                        guard isCurrent(generation) else { return }
+                        do {
+                            unpublished += tag.payload.count
+                            if unpublished >= 64 * 1024 {
+                                _ = await publishReceived(unpublished, generation: generation)
+                                unpublished = 0
+                            }
+                            try await handle(tag, context: context, generation: generation)
+                            lastDelivery = ProcessInfo.processInfo.systemUptime
+                            consecutiveTagErrors = 0
+                        } catch {
+                            guard isCurrent(generation) else { return }
+                            // One malformed tag must not discard seconds of good buffered media.
+                            // Only an unsupported stream is final; anything else drops the tag, and
+                            // a source that keeps failing is replaced like a dead connection.
+                            switch classify(error) {
+                            case .cancelled:
+                                return
+                            case .giveUp(let reason):
+                                await failBuffered(reason, generation: generation)
+                                return
+                            case .retrySameURL(let reason), .needFreshURL(let reason):
+                                if tag.type == .video { context.needsSyncSample = true }
+                                consecutiveTagErrors += 1
+                                lastError = reason
+                                if consecutiveTagErrors == Self.brokenSourceTagErrors {
+                                    brokenSource = true
+                                    LiveDiagnostics.record("buffer.decodeFailed", fields: ["player": diagnosticID, "error": reason])
+                                }
+                            }
                         }
                     }
-                }
-            } else {
-                if context.didStartClock, refill == nil,
-                   await pauseWhenDrained(end: context.lastQueuedEnd, generation: generation) {
-                    context.clockNeedsResume = true
-                    refill = (jitter.stalled(at: now), now)
-                    // Bytes still arriving on a live socket: the network is slower than the stream.
-                    let bandwidthLimited = !snapshot.ended && !silent && network.satisfied
-                    LiveDiagnostics.record("buffer.underrun", fields: ["player": diagnosticID,
-                        "refillTarget": String(refill?.target ?? 0), "bandwidthLimited": String(bandwidthLimited)])
-                    if bandwidthLimited, jitter.recordUnderrun(at: now) {
-                        await reportSustainedUnderrun(generation: generation)
+                    if now - lastReport >= 1 {
+                        lastReport = now
+                        await reportBuffer(snapshot, renewing: preparation != nil, generation: generation)
                     }
+                    continue
                 }
-                if !initialized || refill != nil {
-                    let desired: State = !network.satisfied ? .waitingForNetwork
-                        : preparationRecovers || (snapshot.ended && snapshot.count == 0) ? .reconnecting(attempt: max(1, policy.attempts))
-                        : .buffering
-                    if desired != presented {
-                        presented = desired
-                        await setState(desired, generation: generation)
-                    }
-                }
-                if policy.exhausted(at: now), preparation == nil, network.satisfied, snapshot.count == 0,
-                   !context.didStartClock || context.clockNeedsResume,
-                   snapshot.ended || now - lastDelivery > 20 {
-                    await failBuffered("\(lastError)，刷新多次仍未成功", generation: generation)
-                    return
-                }
-                if initialized, refill == nil, !snapshot.ended {
-                    // Playing at the live edge: wake as soon as the next tag arrives.
-                    await source.buffer.waitForTag(timeout: .milliseconds(100))
-                } else {
-                    // Startup, refill and offline waits are measured in seconds.
-                    do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
-                }
-                guard !Task.isCancelled else { return }
             }
+            if context.didStartClock, refill == nil,
+               await pauseWhenDrained(end: context.lastQueuedEnd, generation: generation) {
+                context.clockNeedsResume = true
+                refill = (jitter.stalled(at: now), now)
+                // Bytes still arriving on a live socket: the network is slower than the stream.
+                let bandwidthLimited = !snapshot.ended && !silent && network.satisfied
+                LiveDiagnostics.record("buffer.underrun", fields: ["player": diagnosticID,
+                    "refillTarget": String(refill?.target ?? 0), "bandwidthLimited": String(bandwidthLimited)])
+                if bandwidthLimited, jitter.recordUnderrun(at: now) {
+                    await reportSustainedUnderrun(generation: generation)
+                }
+            }
+            if let reason = terminalFailure, snapshot.count == 0,
+               !context.didStartClock || context.clockNeedsResume {
+                await failBuffered(reason, generation: generation)
+                return
+            }
+            if !initialized || refill != nil {
+                let desired: State = !network.satisfied ? .waitingForNetwork
+                    : preparationRecovers || (snapshot.ended && snapshot.count == 0) ? .reconnecting(attempt: max(1, policy.attempts))
+                    : .buffering
+                if desired != presented {
+                    presented = desired
+                    await setState(desired, generation: generation)
+                }
+            }
+            if policy.exhausted(at: now), preparation == nil, network.satisfied, snapshot.count == 0,
+               !context.didStartClock || context.clockNeedsResume,
+               snapshot.ended || now - lastDelivery > 20 {
+                await failBuffered("\(lastError)，刷新多次仍未成功", generation: generation)
+                return
+            }
+            if initialized, refill == nil, !snapshot.ended {
+                // Playing at the live edge: wake as soon as the next tag arrives.
+                await source.buffer.waitForTag(timeout: .milliseconds(100))
+            } else {
+                // Startup, refill and offline waits are measured in seconds.
+                do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
+            }
+            guard !Task.isCancelled else { return }
             if now - lastReport >= 1 {
                 lastReport = now
                 await reportBuffer(snapshot, renewing: preparation != nil, generation: generation)
@@ -1109,6 +1190,7 @@ final class FLVLivePlayer {
                 context.awaitingRebase = true
             }
             if context.awaitingRebase { context.lastAudioTimestamp = tag.timestamp; return }
+            if consumeAudioReset() { context.resetAudioTimeline() }
             context.lastAudioTimestamp = tag.timestamp
             let pts = audioPresentationTime(containerTimestamp: tag.timestamp, context: context)
             let sample = try makeAudioSampleBuffer(data: frame, format: format, pts: pts, sampleRate: context.audioSampleRate)
@@ -1154,6 +1236,38 @@ final class FLVLivePlayer {
 
     // MARK: - CMSampleBuffer 构造
 
+    /// 让 CoreMedia 自行用 kCFAllocatorDefault 分配并托管内存，避免跨分配器释放。
+    private func makeBlockBuffer(from data: Data) throws -> CMBlockBuffer {
+        var blockBuffer: CMBlockBuffer?
+        var status = CMBlockBufferCreateWithMemoryBlock(
+            allocator: kCFAllocatorDefault,
+            memoryBlock: nil,
+            blockLength: data.count,
+            blockAllocator: kCFAllocatorDefault,
+            customBlockSource: nil,
+            offsetToData: 0,
+            dataLength: data.count,
+            flags: kCMBlockBufferAssureMemoryNowFlag,
+            blockBufferOut: &blockBuffer
+        )
+        guard status == noErr, let blockBuffer else {
+            throw LivePlayerError.sampleBufferFailed(status)
+        }
+        status = data.withUnsafeBytes { bytes in
+            guard let base = bytes.baseAddress else { return noErr }
+            return CMBlockBufferReplaceDataBytes(
+                with: base,
+                blockBuffer: blockBuffer,
+                offsetIntoDestination: 0,
+                dataLength: data.count
+            )
+        }
+        guard status == noErr else {
+            throw LivePlayerError.sampleBufferFailed(status)
+        }
+        return blockBuffer
+    }
+
     private func makeSampleBuffer(
         data: Data,
         format: CMVideoFormatDescription,
@@ -1162,25 +1276,7 @@ final class FLVLivePlayer {
         isKeyframe: Bool,
         decodeOnly: Bool = false
     ) throws -> CMSampleBuffer {
-        var blockBuffer: CMBlockBuffer?
-        let raw = UnsafeMutablePointer<UInt8>.allocate(capacity: data.count)
-        data.copyBytes(to: raw, count: data.count)
-
-        var status = CMBlockBufferCreateWithMemoryBlock(
-            allocator: kCFAllocatorDefault,
-            memoryBlock: raw,
-            blockLength: data.count,
-            blockAllocator: kCFAllocatorDefault,  // 由 CMBlockBuffer 接管释放
-            customBlockSource: nil,
-            offsetToData: 0,
-            dataLength: data.count,
-            flags: 0,
-            blockBufferOut: &blockBuffer
-        )
-        guard status == noErr, let blockBuffer else {
-            raw.deallocate()
-            throw LivePlayerError.sampleBufferFailed(status)
-        }
+        let blockBuffer = try makeBlockBuffer(from: data)
 
         var timing = CMSampleTimingInfo(
             duration: .invalid,
@@ -1190,7 +1286,7 @@ final class FLVLivePlayer {
         var sampleSize = data.count
         var sampleBuffer: CMSampleBuffer?
 
-        status = CMSampleBufferCreateReady(
+        let status = CMSampleBufferCreateReady(
             allocator: kCFAllocatorDefault,
             dataBuffer: blockBuffer,
             formatDescription: format,
@@ -1232,25 +1328,7 @@ final class FLVLivePlayer {
         pts: CMTime,
         sampleRate: Double
     ) throws -> CMSampleBuffer {
-        var blockBuffer: CMBlockBuffer?
-        let raw = UnsafeMutablePointer<UInt8>.allocate(capacity: data.count)
-        data.copyBytes(to: raw, count: data.count)
-
-        var status = CMBlockBufferCreateWithMemoryBlock(
-            allocator: kCFAllocatorDefault,
-            memoryBlock: raw,
-            blockLength: data.count,
-            blockAllocator: kCFAllocatorDefault,
-            customBlockSource: nil,
-            offsetToData: 0,
-            dataLength: data.count,
-            flags: 0,
-            blockBufferOut: &blockBuffer
-        )
-        guard status == noErr, let blockBuffer else {
-            raw.deallocate()
-            throw LivePlayerError.sampleBufferFailed(status)
-        }
+        let blockBuffer = try makeBlockBuffer(from: data)
 
         // AAC 每包固定 1024 帧，时长按流的真实采样率计算
         var timing = CMSampleTimingInfo(
@@ -1261,7 +1339,7 @@ final class FLVLivePlayer {
         var sampleSize = data.count
         var sampleBuffer: CMSampleBuffer?
 
-        status = CMSampleBufferCreateReady(
+        let status = CMSampleBufferCreateReady(
             allocator: kCFAllocatorDefault,
             dataBuffer: blockBuffer,
             formatDescription: format,
@@ -1462,7 +1540,10 @@ struct FLVVideoLayerView: UIViewRepresentable {
             super.layoutSubviews()
             // 不依赖任何屏幕尺寸假设，始终跟随自身 bounds
             guard hostedLayer?.superlayer === layer else { return }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
             hostedLayer?.frame = bounds
+            CATransaction.commit()
         }
     }
 }

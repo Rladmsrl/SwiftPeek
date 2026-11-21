@@ -112,7 +112,7 @@ private struct PlayerDanmakuPanel: View {
 
                 VStack(alignment: .leading, spacing: 10) {
                     Toggle(isOn: $isVisible) { Label("画面弹幕", systemImage: "text.bubble") }
-                    Toggle(isOn: $settings.data.pictureInPictureDanmaku) {
+                    Toggle(isOn: $settings.pictureInPictureDanmaku) {
                         Label("画中画显示弹幕", systemImage: "pip")
                     }
                     Text(pipHint).font(.caption2).foregroundStyle(.secondary)
@@ -122,17 +122,17 @@ private struct PlayerDanmakuPanel: View {
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text("字体").font(.subheadline.weight(.medium))
-                    Picker("字体", selection: $settings.data.danmakuFont) {
+                    Picker("字体", selection: $settings.danmakuFont) {
                         ForEach(DanmakuFont.allCases) { font in
                             Text(font.label).font(Font(font.makeFont(size: 13))).tag(font)
                         }
                     }.pickerStyle(.segmented).labelsHidden()
                 }
 
-                adjustment("字号", value: $settings.data.danmakuFontSize, range: 11...32,
-                           step: 1, display: "\(Int(settings.data.danmakuFontSize))")
-                adjustment("可见度", value: $settings.data.danmakuOpacity, range: 0.2...1,
-                           step: 0.05, display: "\(Int((settings.data.danmakuOpacity * 100).rounded()))%")
+                adjustment("字号", value: $settings.danmakuFontSize, range: 11...32,
+                           step: 1, display: "\(Int(settings.danmakuFontSize))")
+                adjustment("可见度", value: $settings.danmakuOpacity, range: 0.2...1,
+                           step: 0.05, display: "\(Int((settings.danmakuOpacity * 100).rounded()))%")
 
             }
             .padding(18)
@@ -151,13 +151,13 @@ private struct PlayerDanmakuPanel: View {
             Text("效果预览").font(.system(size: 9, weight: .medium)).foregroundStyle(.white.opacity(0.45))
                 .padding(.horizontal, 10).padding(.top, 7)
             Text("弹幕刚刚好 Aa")
-                .font(Font(settings.data.danmakuFont.makeFont(size: settings.data.danmakuFontSize)))
-                .foregroundStyle(.white).opacity(settings.data.danmakuOpacity)
+                .font(Font(settings.danmakuFont.makeFont(size: settings.danmakuFontSize)))
+                .foregroundStyle(.white).opacity(settings.danmakuOpacity)
                 .frame(maxWidth: .infinity, maxHeight: .infinity).padding(.top, 12)
         }
         .frame(height: 72).clipShape(.rect(cornerRadius: 12))
         .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(.white.opacity(0.08), lineWidth: 1) }
-        .accessibilityLabel("弹幕效果预览，\(settings.data.danmakuFont.label)，字号 \(Int(settings.data.danmakuFontSize))，可见度 \(Int(settings.data.danmakuOpacity * 100))%")
+        .accessibilityLabel("弹幕效果预览，\(settings.danmakuFont.label)，字号 \(Int(settings.danmakuFontSize))，可见度 \(Int(settings.danmakuOpacity * 100))%")
     }
 
     private var pipHint: String {

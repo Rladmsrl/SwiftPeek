@@ -87,7 +87,15 @@ struct ReplayCheck {
         let bins = ReplayDanmakuHeat.normalize([0, 0, 9, 0, 0, 36, 0])
         precondition(bins.count == 7 && bins.max() == 1 && bins[0] == 0 && bins[2] > 0)
         precondition(ReplayDanmakuHeat.normalize([0, 0]).allSatisfy { $0 == 0 })
-        print("PASS: heat curve normalizes and smooths")
+        let heat = ReplayDanmakuHeat()
+        heat.start(duration: 100) { _ in
+            DouyuReplayDanmakuBatch(items: [DouyuReplayDanmaku(id: "h1", offset: 10, userName: "u", text: "t")], nextStart: nil)
+        }
+        for _ in 0..<100 where !heat.isComplete { try await Task.sleep(for: .milliseconds(5)) }
+        precondition(!heat.bins.isEmpty && heat.isComplete)
+        heat.start(duration: 0) { _ in DouyuReplayDanmakuBatch(items: [], nextStart: nil) }
+        precondition(heat.bins.isEmpty && !heat.isComplete, "Switching to zero-duration replay left previous heat curve")
+        print("PASS: heat curve normalizes, smooths, and resets cleanly on new replay")
         try await playerLifecycleCheck()
     }
 

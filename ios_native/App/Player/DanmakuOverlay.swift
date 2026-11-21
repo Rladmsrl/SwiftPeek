@@ -63,6 +63,7 @@ final class DanmakuHostView: DanmakuPlatformView {
     /// 字号、区域、速度变了要立刻重算轨道。只等下一次 layout 的话，
     /// 从设置页返回时 bounds 没变，飞幕仍按旧行数排，会重叠。
     func apply(_ newSettings: DanmakuSettings) {
+        let oldOpacity = settings.opacity
         let layoutChanged = settings.font != newSettings.font
             || settings.fontSize != newSettings.fontSize
             || settings.areaRatio != newSettings.areaRatio
@@ -70,7 +71,9 @@ final class DanmakuHostView: DanmakuPlatformView {
             || settings.gap != newSettings.gap
         settings = newSettings
         guard layoutChanged else {
-            drawingLayer.sublayers?.forEach { $0.opacity = Float(settings.opacity) }
+            if oldOpacity != newSettings.opacity {
+                drawingLayer.sublayers?.forEach { $0.opacity = Float(settings.opacity) }
+            }
             return
         }
         trackCount = 0
@@ -198,9 +201,14 @@ struct DanmakuOverlay {
         }
 
         guard isVisible else {
+            if coordinator.wasVisible {
+                coordinator.wasVisible = false
+                uiView.clear()
+            }
             coordinator.consumed = messages.last?.id
             return
         }
+        coordinator.wasVisible = true
 
         // 找到上次消费位置之后的新消息
         let pending: [LiveMessage]
@@ -236,6 +244,7 @@ struct DanmakuOverlay {
         var consumed: UUID?
         var clearToken = 0
         var didClear = false
+        var wasVisible = false
     }
 }
 
