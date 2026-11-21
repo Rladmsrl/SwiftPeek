@@ -5,49 +5,172 @@ import UIKit
 
 // MARK: - 播放器所在的场景
 
+/// Per-window coordinator that keeps programmatic orientation overrides bounded to
+/// outer/phone windowing modes and releases them back to `.all` before a foldable
+/// display transitions to the inner screen (where iOS rejects programmatic rotation
+/// with `UISceneErrorDomain` code 101).
+@MainActor
+private final class SceneOrientationCoordinator {
+    private static let registry = NSMapTable<UIWindow, SceneOrientationCoordinator>.weakToStrongObjects()
+
+    weak var window: UIWindow?
+    private var state = PlayerOrientationState()
+    private var observersInstalled = false
+    private var traitRegistration: (any UITraitChangeRegistration)?
+
+    static func forWindow(_ window: UIWindow?) -> SceneOrientationCoordinator? {
+        guard let window else { return nil }
+        if let existing = registry.object(forKey: window) {
+            existing.installObserversIfNeeded(on: window)
+            return existing
+        }
+        let coordinator = SceneOrientationCoordinator(window: window)
+        registry.setObject(coordinator, forKey: window)
+        coordinator.installObserversIfNeeded(on: window)
+        return coordinator
+    }
+
+    private init(window: UIWindow) {
+        self.window = window
+    }
+
+    private func installObserversIfNeeded(on window: UIWindow) {
+        guard !observersInstalled else { return }
+        observersInstalled = true
+
+        if #available(iOS 27.1, *) {
+            let interaction = UIHingeInteraction { [weak self] _, update in
+                self?.handleHingeUpdate(update.hinge)
+            }
+            window.addInteraction(interaction)
+        }
+
+        traitRegistration = window.registerForTraitChanges([UITraitHorizontalSizeClass.self]) { [weak self] (win: UIWindow, previous: UITraitCollection) in
+            guard previous.horizontalSizeClass == .regular,
+                  win.traitCollection.horizontalSizeClass == .compact else { return }
+            self?.handleReturnedToCompactMode()
+        }
+    }
+
+    func requestLandscapeFullscreen() {
+        guard let scene = window?.windowScene else { return }
+        let current = Self.direction(from: scene.effectiveGeometry.interfaceOrientation)
+        guard let request = state.requestLandscapeFullscreen(current: current) else { return }
+        submit(request, to: scene)
+    }
+
+    func restoreOrientationBeforeFullscreen() {
+        guard let scene = window?.windowScene else { return }
+        guard let request = state.restoreOrientationBeforeFullscreen() else { return }
+        submit(request, to: scene)
+    }
+
+    func requestOrientation(_ mask: UIInterfaceOrientationMask) {
+        guard let scene = window?.windowScene, let target = Self.targetMask(from: mask) else { return }
+        guard let request = state.requestExplicitOrientation(target) else { return }
+        submit(request, to: scene)
+    }
+
+    @available(iOS 27.1, *)
+    private func handleHingeUpdate(_ hinge: UIHinge?) {
+        let request: PlayerOrientationState.Request?
+        if let hinge {
+            request = state.updateHinge(
+                isAvailable: true,
+                isClosed: hinge.status == .closed,
+                isOpen: hinge.status == .partiallyOpen || hinge.status == .fullyOpen,
+                angleRadians: Double(hinge.angle)
+            )
+        } else {
+            request = state.updateHinge(isAvailable: false, isClosed: false, isOpen: false, angleRadians: 0)
+        }
+        guard let request, let scene = window?.windowScene else { return }
+        submit(request, to: scene)
+    }
+
+    private func handleReturnedToCompactMode() {
+        guard let request = state.sceneReturnedToCompactMode(),
+              let scene = window?.windowScene else { return }
+        submit(request, to: scene)
+    }
+
+    private func submit(_ request: PlayerOrientationState.Request, to scene: UIWindowScene) {
+        let mask = Self.interfaceMask(from: request.mask)
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { [weak self] error in
+            let ns = error as NSError
+            let deniedByWindowingMode = ns.domain == UISceneError.errorDomain && (
+                ns.code == UISceneError.Code.geometryRequestDenied.rawValue ||
+                ns.code == UISceneError.Code.geometryRequestUnsupported.rawValue
+            )
+            LiveDiagnostics.record("ui.orientationRequestFailed", fields: [
+                "code": String(ns.code)
+            ])
+            Task { @MainActor [weak self] in
+                self?.state.recordRequestFailure(for: request, deniedByWindowingMode: deniedByWindowingMode)
+            }
+        }
+    }
+
+    private static func direction(from orientation: UIInterfaceOrientation) -> PlayerOrientationState.Direction {
+        switch orientation {
+        case .portrait: return .portrait
+        case .portraitUpsideDown: return .portraitUpsideDown
+        case .landscapeLeft: return .landscapeLeft
+        case .landscapeRight: return .landscapeRight
+        default: return .unknown
+        }
+    }
+
+    private static func interfaceMask(from target: PlayerOrientationState.TargetMask) -> UIInterfaceOrientationMask {
+        switch target {
+        case .portrait: return .portrait
+        case .portraitUpsideDown: return .portraitUpsideDown
+        case .landscapeLeft: return .landscapeLeft
+        case .landscapeRight: return .landscapeRight
+        case .landscape: return .landscape
+        case .all: return .all
+        }
+    }
+
+    private static func targetMask(from mask: UIInterfaceOrientationMask) -> PlayerOrientationState.TargetMask? {
+        switch mask {
+        case .portrait: return .portrait
+        case .portraitUpsideDown: return .portraitUpsideDown
+        case .landscapeLeft: return .landscapeLeft
+        case .landscapeRight: return .landscapeRight
+        case .landscape: return .landscape
+        case .all: return .all
+        default: return nil
+        }
+    }
+}
+
 /// Each player reads the screen from its own current window, including after a fold.
 @MainActor
 final class PlayerSceneContext {
-    weak var window: UIWindow?
-    private var orientationBeforeFullscreen: UIInterfaceOrientation?
+    weak var window: UIWindow? {
+        didSet {
+            // Attach the per-window hinge observer as soon as a player mounts so
+            // unfolding releases any active orientation override before display switch.
+            _ = SceneOrientationCoordinator.forWindow(window)
+        }
+    }
 
     var brightness: Double {
         get { Double(window?.windowScene?.screen.brightness ?? 0.5) }
         set { window?.windowScene?.screen.brightness = CGFloat(min(max(newValue, 0), 1)) }
     }
 
-    /// Remember the entry orientation once, including an existing landscape side.
-    /// Repeated entry requests must not replace the original portrait orientation.
     func requestLandscapeFullscreen() {
-        guard let scene = window?.windowScene else { return }
-        let orientation = scene.effectiveGeometry.interfaceOrientation
-        if orientationBeforeFullscreen == nil, orientation != .unknown {
-            orientationBeforeFullscreen = orientation
-        }
-        guard !orientation.isLandscape else { return }
-        requestOrientation(.landscape)
+        SceneOrientationCoordinator.forWindow(window)?.requestLandscapeFullscreen()
     }
 
     func restoreOrientationBeforeFullscreen() {
-        guard let orientation = orientationBeforeFullscreen else { return }
-        orientationBeforeFullscreen = nil
-        // Submit even if the scene still reports the old direction: the entry
-        // rotation may be pending when the user quickly exits fullscreen.
-        switch orientation {
-        case .portrait: requestOrientation(.portrait)
-        case .portraitUpsideDown: requestOrientation(.portraitUpsideDown)
-        case .landscapeLeft: requestOrientation(.landscapeLeft)
-        case .landscapeRight: requestOrientation(.landscapeRight)
-        default: break
-        }
+        SceneOrientationCoordinator.forWindow(window)?.restoreOrientationBeforeFullscreen()
     }
 
     func requestOrientation(_ mask: UIInterfaceOrientationMask) {
-        window?.windowScene?.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { error in
-            LiveDiagnostics.record("ui.orientationRequestFailed", fields: [
-                "code": String((error as NSError).code)
-            ])
-        }
+        SceneOrientationCoordinator.forWindow(window)?.requestOrientation(mask)
     }
 }
 

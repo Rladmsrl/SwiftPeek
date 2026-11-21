@@ -403,6 +403,43 @@ final class DuoLayoutUITests: XCTestCase {
         XCTAssertTrue(setSimulatorHingeAngle(0).isFinite)
     }
 
+    func testDuoOuterFullscreenUnfoldAndRefold() throws {
+        guard setSimulatorHingeAngle(0).isFinite else { throw XCTSkip("Duo hinge unavailable") }
+        app.launchArguments += ["-launchRoomLayout", "1", "-keepControls", "1"]
+        app.launch()
+        let panel = app.staticTexts["实时弹幕"]
+        XCTAssertTrue(panel.waitForExistence(timeout: 20))
+        let window = app.windows.firstMatch
+        let outerPortrait = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            window.frame.height > window.frame.width
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [outerPortrait], timeout: 5), .completed)
+
+        // Enter fullscreen on outer screen -> rotates to landscape.
+        app.buttons["全屏"].firstMatch.tap()
+        let outerLandscape = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            window.frame.width > window.frame.height
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [outerLandscape], timeout: 5), .completed)
+        XCTAssertTrue(app.buttons["退出全屏"].firstMatch.waitForExistence(timeout: 5))
+
+        // Unfold to inner screen while in fullscreen; exit fullscreen cleanly on inner screen.
+        try fold(180, name: "outer-fullscreen-unfolded-inner")
+        exitFullscreen("inner-after-outer-fullscreen-exited")
+        XCTAssertTrue(panel.isHittable)
+
+        // Refold to outer screen and confirm outer fullscreen still rotates and restores cleanly.
+        try fold(0, name: "refolded-outer-after-inner-exit")
+        app.buttons["全屏"].firstMatch.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            window.frame.width > window.frame.height
+        }, object: nil)], timeout: 5), .completed)
+        exitFullscreen("refolded-outer-fullscreen-exited")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            window.frame.height > window.frame.width && panel.isHittable
+        }, object: nil)], timeout: 5), .completed)
+    }
+
 
     func testSystemPictureInPictureCapability() throws {
         let supported = AVPictureInPictureController.isPictureInPictureSupported()
