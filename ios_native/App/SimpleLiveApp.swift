@@ -27,13 +27,13 @@ struct SimpleLiveApp: App {
         WindowGroup {
             RootView(router: router)
                 .followTransferPresentation()
+                .appAppearance()
                 .environment(followTransfer)
                 .tint(Theme.accent)
                 .environment(settings)
                 .environment(library)
                 .environment(router)
                 .environment(multiWatch)
-                .appAppearance()
                 .onOpenURL { url in
                     if !followTransfer.receive(url) { router.handle(url: url) }
                 }
@@ -51,11 +51,11 @@ struct SimpleLiveApp: App {
                 }
                 .fullScreenCover(isPresented: $multiWatch.isPresented, onDismiss: { multiWatch.finish() }) {
                     MultiWatchView()
+                        .appAppearance()
                         .environment(multiWatch)
                         .environment(settings)
                         .environment(library)
                         .tint(Theme.accent)
-                        .appAppearance()
                 }
         }
     }
