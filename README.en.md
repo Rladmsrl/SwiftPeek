@@ -29,14 +29,14 @@ The project is still evolving. Feedback from actual playback, background transit
 
 ## Downloads and privacy
 
-The latest release on both platforms is **0.8.9 (23)** ([iOS](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.9-ios) · [macOS](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.9-macos)). It is a broad performance, playback stability, and UX pass covering protocol/sign context pooling, live/replay playback and iOS audio-session handling, PiP and danmaku rasterization performance, granular state observation, and UI fixes across both apps. Release notes (Chinese): [iOS](docs/release-notes/0.8.9-ios.md) · [macOS](docs/release-notes/0.8.9-macos.md).
+The latest iOS release is **[0.8.10 (24)](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.10-ios)**; the latest macOS release is **[0.8.9 (23)](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.9-macos)**. iOS 0.8.10 includes all 0.8.9 performance and stability improvements, fixes the 0.8.9 iOS launch crash, and fixes iPhone Duo inner-display physical rotation getting stuck after outer-screen fullscreen (#1). Release notes (Chinese): [iOS 0.8.10](docs/release-notes/0.8.10-ios.md) · [macOS 0.8.9](docs/release-notes/0.8.9-macos.md).
 
 | Platform | Download | Requirements and installation |
 | --- | --- | --- |
 | macOS | [Universal ZIP](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.9-macos/SwiftPeek-0.8.9-macOS-universal.zip) | macOS 26+; arm64 and x86_64; extract and move the app to Applications |
-| iPhone / iPad | [Unsigned IPA](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.9-ios/SwiftPeek-0.8.9-iOS-unsigned.ipa) | iOS / iPadOS 26+, arm64; sign with your own identity before sideloading; cannot be installed directly |
+| iPhone / iPad | [Unsigned IPA](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.10-ios/SwiftPeek-0.8.10-iOS-unsigned.ipa) | iOS / iPadOS 26+, arm64; sign with your own identity before sideloading; cannot be installed directly |
 
-iOS: [Matching source](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.9-ios/SwiftPeek-0.8.9-source.zip) · [SHA-256 checksums](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.9-ios/SHA256SUMS.txt). For macOS source and checksums, see the [0.8.9 macOS release](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.9-macos).
+iOS: [Matching source](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.10-ios/SwiftPeek-0.8.10-source.zip) · [SHA-256 checksums](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.10-ios/SHA256SUMS.txt). For macOS source and checksums, see the [0.8.9 macOS release](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.9-macos).
 
 The Mac app is ad-hoc signed and has not been notarized with Developer ID. Gatekeeper may block the first launch; after checking the source and checksum, follow the system prompts in System Settings → Privacy & Security to allow this app. The Intel slice is cross-compiled; it has not been tested on Intel hardware or a Mac running macOS 26.
 

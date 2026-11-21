@@ -2,10 +2,10 @@
 
 ## 版本
 
-两端只从 `shared/version.yml` 读取版本。当前双端版本为 0.8.9 (23)。每次发布递增版本和 build：
+两端只从 `shared/version.yml` 读取版本。当前版本为 0.8.10 (24)（iOS 0.8.10，macOS 仍停在 0.8.9）。每次发布递增版本和 build：
 
 ```sh
-python3 scripts/bump-version.py          # 0.8.9 -> 0.8.10，同时 build +1
+python3 scripts/bump-version.py          # 0.8.10 -> 0.8.11，同时 build +1
 python3 scripts/bump-version.py 0.9.0    # 显式指定更高版本
 ```
 
@@ -76,3 +76,7 @@ iOS IPA 上传后应下载回验，并将其摘要加入同一版本的 SHA256SU
 ## 双端 0.8.9 发布
 
 两端从同一提交构建，分别发布 [iOS 播放稳定性、渲染性能与体验全面优化](release-notes/0.8.9-ios.md) 和 [macOS 播放稳定性、渲染性能与体验全面优化](release-notes/0.8.9-macos.md)。覆盖网络协议、直播/录像播放内核、画中画与弹幕光栅化性能、细粒度状态观察及双端交互修复。沿用解包审计和下载回验流程，两端各自检查。
+
+## iOS 0.8.10 发布
+
+只发布 iOS：[iPhone Duo 展开内屏方向锁定与 iOS 0.8.9 启动崩溃修复](release-notes/0.8.10-ios.md)。版本与 build 同步递增到 0.8.10 (24)，macOS 仍停在 0.8.9，本版未构建、未发布 macOS 产物。沿用解包审计和下载回验流程。

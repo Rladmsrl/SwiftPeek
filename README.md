@@ -27,14 +27,14 @@ SwiftPeek 是一个开源的斗鱼第三方客户端，使用 Swift / SwiftUI �
 
 ## 下载与隐私
 
-双端最新版本均为 **0.8.9 (23)**（[iOS](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.9-ios) · [macOS](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.9-macos)）。本次是一轮全面的性能、稳定性与体验修复：涵盖协议签名池、直播/录像播放与音频中断处理、画中画与弹幕渲染优化、细粒度状态观察以及双端交互细节。更新说明：[iOS](docs/release-notes/0.8.9-ios.md) · [macOS](docs/release-notes/0.8.9-macos.md)。
+iOS 最新版本为 **[0.8.10 (24)](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.10-ios)**；macOS 最新版本为 **[0.8.9 (23)](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.9-macos)**。iOS 0.8.10 包含 0.8.9 全部性能优化，并修复 iOS 0.8.9 启动崩溃与 iPhone Duo 外屏全屏后展开内屏无法物理旋转的问题（#1）。更新说明：[iOS 0.8.10](docs/release-notes/0.8.10-ios.md) · [macOS 0.8.9](docs/release-notes/0.8.9-macos.md)。
 
 | 平台 | 下载 | 系统与安装要求 |
 | --- | --- | --- |
 | macOS | [Universal ZIP](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.9-macos/SwiftPeek-0.8.9-macOS-universal.zip) | macOS 26+；包含 arm64 与 x86_64，解压后将 App 拖入“应用程序” |
-| iPhone / iPad | [无签名 IPA](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.9-ios/SwiftPeek-0.8.9-iOS-unsigned.ipa) | iOS / iPadOS 26+、arm64；需要使用自己的签名身份重签后侧载，不能直接安装 |
+| iPhone / iPad | [无签名 IPA](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.10-ios/SwiftPeek-0.8.10-iOS-unsigned.ipa) | iOS / iPadOS 26+、arm64；需要使用自己的签名身份重签后侧载，不能直接安装 |
 
-iOS：[对应源码](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.9-ios/SwiftPeek-0.8.9-source.zip) · [SHA-256 校验文件](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.9-ios/SHA256SUMS.txt)。macOS 对应源码和校验文件见 [0.8.9 macOS 发布页](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.9-macos)。
+iOS：[对应源码](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.10-ios/SwiftPeek-0.8.10-source.zip) · [SHA-256 校验文件](https://github.com/Rladmsrl/SwiftPeek/releases/download/v0.8.10-ios/SHA256SUMS.txt)。macOS 对应源码和校验文件见 [0.8.9 macOS 发布页](https://github.com/Rladmsrl/SwiftPeek/releases/tag/v0.8.9-macos)。
 
 macOS 包采用 ad-hoc 签名，未做 Developer ID 公证，首次打开可能被 Gatekeeper 阻止。核对来源和校验值后，可按系统提示在“系统设置 → 隐私与安全性”允许该应用。Intel 版本已交叉编译，尚无 Intel 或 macOS 26 真机验证。
 
